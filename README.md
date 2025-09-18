@@ -9,6 +9,9 @@
 **[🌌 Launch Cymatic Cosmos](https://jkh2.github.io/cymatic-cosmos/)**  
 *Experience the cosmic symphony in your browser - no installation required!*
 
+![Cymatic Cosmos Screenshot](screenshot1.png)
+*Tesla coil effects and polyrhythmic orbs creating cosmic harmony*
+
 > 💡 **Tip**: Allow microphone access when prompted to experience the full voice-reactive starfield magic!
 
 ---
