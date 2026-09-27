@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice-Reactive Polyrhythm Explorer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { 
+            background: #111; 
+            color: white; 
+            font-family: Arial; 
+            padding: 20px; 
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .controls { 
+            display: flex; 
+            gap: 10px; 
+            margin: 20px 0; 
+            flex-wrap: wrap; 
+            justify-content: center;
+            align-items: center;
+        }
+        button { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; }
+        .play { background: #059669; color: white; }
+        .stop { background: #dc2626; color: white; }
+        .mic { background: #2563eb; color: white; }
+        input[type="range"] { width: 100px; }
+        .track { background: #333; padding: 10px; margin: 5px; border-radius: 5px; }
+        svg { border: 2px solid #666; border-radius: 10px; margin: 10px 0; }
+        #tracks {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 800px;
+        }
+        @media (max-width: 900px) {
+            .controls {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Voice-Reactive Polyrhythm Explorer</h1>
+        
+        <div class="controls">
+            <button id="playBtn" class="play">Play</button>
+            <button id="micBtn" class="mic">Enable Mic</button>
+            <button id="prayerBtn" class="mic" style="background: #8b5cf6;">Prayer Mode</button>
+            <button id="screenshotBtn" class="mic" style="background: #f59e0b;">📸 Screenshot</button>
+            <button id="savePresetBtn" class="mic" style="background: #10b981;">💾 Save Preset</button>
+            <button id="loadPresetBtn" class="mic" style="background: #8b5cf6;">📂 Load Preset</button>
+            <input type="file" id="presetFileInput" accept=".json" style="display: none;">
+            <label>Tempo: <input type="range" id="tempo" min="20" max="200" value="120"></label>
+            <label>Voice: <input type="range" id="voice" min="0" max="2" step="0.1" value="0.5"></label>
+        </div>
+
+        <svg id="canvas" width="800" height="600" style="background: black;">
+            <defs>
+                <radialGradient id="center" cx="50%" cy="50%" r="50%">
+                    <stop offset="0%" stop-color="#fff" stop-opacity="1" />
+                    <stop offset="100%" stop-color="#00f" stop-opacity="0.1" />
+                </radialGradient>
+            </defs>
+            <g id="stars"></g>
+            <g id="paths"></g>
+            <circle id="centerPoint" cx="400" cy="300" r="20" fill="url(#center)" />
+            <g id="orbs"></g>
+        </svg>
+
+        <div id="tracks"></div>
+    </div>
+
+    <script>
+        let isPlaying = false, tempo = 120, voiceInfluence = 0.5, micEnabled = false;
+        let prayerMode = false, fundamentalFreq = 0, harmonicNotes = [];
+        let audioLevel = 0, smoothedAudio = 0, freqData = new Array(32).fill(0);
+        let synth, harmonySynth, micStream, analyser, dataArray, lastTriggers = {}, startTime = 0;
+        let stars = [], orbs = [], animFrame, starFrame;
+
+        let tracks = [
+            { id: 1, rhythm: 4, active: true, note: 'C4', volume: 0.25, color: '#ff6b6b', path: 0 },
+            { id: 2, rhythm: 3, active: true, note: 'E4', volume: 0.25, color: '#4ecdc4', path: 1 },
+            { id: 3, rhythm: 5, active: true, note: 'G4', volume: 0.25, color: '#45b7d1', path: 2 },
+            { id: 4, rhythm: 7, active: true, note: 'B4', volume: 0.25, color: '#96ceb4', path: 3 },
+            { id: 5, rhythm: 6, active: false, note: 'D5', volume: 0.2, color: '#ffd93d', path: 0 },
+            { id: 6, rhythm: 8, active: false, note: 'F4', volume: 0.2, color: '#ff9ff3', path: 1 },
+            { id: 7, rhythm: 9, active: false, note: 'A4', volume: 0.2, color: '#a8e6cf', path: 2 },
+            { id: 8, rhythm: 11, active: false, note: 'C5', volume: 0.2, color: '#ffaaa5', path: 3 },
+            { id: 9, rhythm: 2, active: false, note: 'G3', volume: 0.3, color: '#ff8b94', path: 0 },
+            { id: 10, rhythm: 13, active: false, note: 'E5', volume: 0.15, color: '#b4a7d6', path: 1 },
+            { id: 11, rhythm: 10, active: false, note: 'D4', volume: 0.2, color: '#d4a574', path: 2 },
+            { id: 12, rhythm: 12, active: false, note: 'F5', volume: 0.15, color: '#85dcb0', path: 3 }
+        ];
+
+        async function initAudio() {
+            await Tone.start();
+            
+            synth = new Tone.PolySynth(Tone.Synth, {
+                envelope: { attack: 0.1, decay: 0.5, sustain: 0.3, release: 1.5 },
+                filter: { frequency: 1000, type: 'lowpass' }
+            });
+            
+            harmonySynth = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: 'sine' },
+                envelope: { attack: 0.3, decay: 1.0, sustain: 0.6, release: 3.0 },
+                filter: { frequency: 800, type: 'lowpass' }
+            });
+            
+            const reverb = new Tone.Reverb(3);
+            const compressor = new Tone.Compressor(-20, 3);
+            const delay = new Tone.Delay(0.3).connect(reverb);
+            
+            synth.chain(compressor, reverb, Tone.Destination);
+            harmonySynth.chain(delay, reverb, Tone.Destination);
+            harmonySynth.volume.value = -12;
+        }
+
+        function initStars() {
+            stars = Array.from({ length: 200 }, (_, i) => ({
+                id: i, 
+                baseX: Math.random() * 800, 
+                baseY: Math.random() * 600,
+                x: Math.random() * 800, 
+                y: Math.random() * 600,
+                size: 1 + Math.random() * 2, 
+                baseBrightness: 0.3 + Math.random() * 0.4,
+                brightness: 0.3 + Math.random() * 0.4,
+                mass: 0.5 + Math.random() * 0.5,
+                velocityX: 0,
+                velocityY: 0,
+                phase: Math.random() * Math.PI * 2
+            }));
+            renderStars();
+        }
+
+        async function setupMic() {
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    } 
+                });
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaStreamSource(micStream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.3;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                source.connect(analyser);
+                // Don't connect to destination - just analyze
+                micEnabled = true;
+                updateAudio();
+                animateStars();
+                document.getElementById('micBtn').textContent = 'Stop Mic';
+            } catch (e) {
+                alert('Microphone access required for voice interaction');
+            }
+        }
+
+        function stopMic() {
+            if (micStream) {
+                micStream.getTracks().forEach(track => track.stop());
+                micEnabled = false;
+                document.getElementById('micBtn').textContent = 'Enable Mic';
+                if (starFrame) cancelAnimationFrame(starFrame);
+            }
+        }
+
+        function updateAudio() {
+            if (!micEnabled || !analyser) return;
+            analyser.getByteFrequencyData(dataArray);
+            const avg = dataArray.reduce((a, b) => a + b) / dataArray.length;
+            audioLevel = avg / 255;
+            smoothedAudio = smoothedAudio * 0.9 + audioLevel * 0.1;
+            
+            for (let i = 0; i < 32; i++) {
+                const bin = Math.floor((i / 32) * dataArray.length);
+                freqData[i] = freqData[i] * 0.8 + (dataArray[bin] / 255) * 0.2;
+            }
+            
+            if (prayerMode && audioLevel > 0.1) {
+                detectFundamentalAndHarmonize();
+            }
+            
+            requestAnimationFrame(updateAudio);
+        }
+
+        function detectFundamentalAndHarmonize() {
+            let maxMagnitude = 0;
+            let dominantBin = 0;
+            
+            for (let i = 5; i < dataArray.length / 4; i++) {
+                if (dataArray[i] > maxMagnitude) {
+                    maxMagnitude = dataArray[i];
+                    dominantBin = i;
+                }
+            }
+            
+            if (maxMagnitude > 50) {
+                const sampleRate = 44100;
+                const nyquist = sampleRate / 2;
+                const binSize = nyquist / (dataArray.length);
+                fundamentalFreq = dominantBin * binSize;
+                
+                generateHarmonicResponse(fundamentalFreq);
+            }
+        }
+
+        function generateHarmonicResponse(fundamental) {
+            if (!harmonySynth || fundamental < 80 || fundamental > 800) return;
+            
+            const midiNote = Math.round(12 * Math.log2(fundamental / 440) + 69);
+            const rootNote = Tone.Frequency(midiNote, "midi").toNote();
+            
+            const intervals = [0, 7, 12, 19, Math.round(7.85)];
+            
+            intervals.forEach((interval, i) => {
+                setTimeout(() => {
+                    const harmonicNote = Tone.Frequency(midiNote + interval, "midi").toNote();
+                    const volume = 0.1 - (i * 0.02);
+                    harmonySynth.triggerAttackRelease(harmonicNote, "2n", Tone.now(), volume);
+                }, i * 100);
+            });
+        }
+
+        function getPath(progress, pathIndex) {
+            const cx = 400, cy = 300, w = 300, h = 150;
+            const paths = [
+                t => ({ x: cx + w * Math.sin(t * Math.PI * 2), y: cy + h * Math.sin(t * Math.PI * 4) }),
+                t => ({ x: cx + w * Math.sin(t * Math.PI * 2), y: cy + h * 0.6 * Math.sin(t * Math.PI * 2) }),
+                t => ({ x: cx + w * 0.7 * Math.sin(t * Math.PI * 2), y: cy + h * Math.sin(t * Math.PI * 4) }),
+                t => ({ x: cx + w * Math.cos(t * Math.PI * 2) / (1 + Math.sin(t * Math.PI * 2) ** 2), 
+                        y: cy + h * Math.sin(t * Math.PI * 2) * Math.cos(t * Math.PI * 2) / (1 + Math.sin(t * Math.PI * 2) ** 2) }),
+                t => ({ x: cx + w * 0.8 * Math.sin(t * Math.PI * 6) * (0.3 + 0.7 * Math.sin(t * Math.PI * 2)), 
+                        y: cy + h * 0.8 * Math.cos(t * Math.PI * 6) * (0.3 + 0.7 * Math.sin(t * Math.PI * 2)) }),
+                t => ({ x: cx + w * 0.9 * Math.sin(3 * t * Math.PI * 2) * Math.cos(t * Math.PI * 2), 
+                        y: cy + h * 0.9 * Math.sin(3 * t * Math.PI * 2) * Math.sin(t * Math.PI * 2) })
+            ];
+            return paths[pathIndex % paths.length](progress);
+        }
+
+        function animateStars() {
+            const time = Date.now() * 0.001;
+            
+            stars.forEach(star => {
+                if (!micEnabled || smoothedAudio < 0.02) {
+                    // REST MODE: Spread out across screen with gentle drift
+                    
+                    // Gentle drift toward a relaxed spread-out position
+                    const targetX = star.baseX;
+                    const targetY = star.baseY;
+                    
+                    star.velocityX += (targetX - star.x) * 0.002;
+                    star.velocityY += (targetY - star.y) * 0.002;
+                    
+                    // Orb attraction effect (Tesla coil sparks!)
+                    orbs.forEach(orb => {
+                        const distToOrb = Math.sqrt((star.x - orb.x) ** 2 + (star.y - orb.y) ** 2);
+                        if (distToOrb < 120 && distToOrb > 1) {
+                            const orbForce = 0.02 / (distToOrb * 0.05);
+                            const angle = Math.atan2(orb.y - star.y, orb.x - star.x);
+                            star.velocityX += Math.cos(angle) * orbForce;
+                            star.velocityY += Math.sin(angle) * orbForce;
+                            
+                            // Brighten stars near orbs (electric effect)
+                            star.brightness = star.baseBrightness + (1 - distToOrb / 120) * 0.8;
+                            star.size = (1 + Math.random() * 2) + (1 - distToOrb / 120) * 2;
+                        }
+                    });
+                    
+                    // Apply gentle friction
+                    star.velocityX *= 0.95;
+                    star.velocityY *= 0.95;
+                    
+                    // Update position
+                    star.x += star.velocityX;
+                    star.y += star.velocityY;
+                    
+                    // Default brightness if not near orbs
+                    if (orbs.length === 0 || orbs.every(orb => Math.sqrt((star.x - orb.x) ** 2 + (star.y - orb.y) ** 2) > 120)) {
+                        star.brightness = star.baseBrightness + Math.sin(time * 0.5 + star.phase) * 0.1;
+                        star.size = 1 + Math.random() * 2;
+                    }
+                    
+                } else {
+                    // CYMATIC MODE: Voice-driven patterns (when mic is active AND detecting sound)
+                    
+                    const centerX = 400, centerY = 300;
+                    let totalForceX = 0, totalForceY = 0;
+                    let hasVoiceInput = false;
+                    
+                    for (let freqBin = 0; freqBin < Math.min(16, freqData.length); freqBin++) {
+                        const frequency = freqBin * 2 + 1;
+                        const amplitude = freqData[freqBin] * voiceInfluence;
+                        
+                        if (amplitude > 0.15) { // Higher threshold to avoid noise
+                            hasVoiceInput = true;
+                            const wavelength = 400 / (frequency * 0.3);
+                            const phase = time * frequency * 0.2;
+                            
+                            const distFromCenter = Math.sqrt((star.x - centerX) ** 2 + (star.y - centerY) ** 2);
+                            const radialWave = Math.sin((distFromCenter / wavelength) * Math.PI * 2 + phase);
+                            
+                            const angle = Math.atan2(star.y - centerY, star.x - centerX);
+                            const angularWave = Math.sin(angle * frequency + phase);
+                            
+                            const waveIntensity = (radialWave + angularWave) * amplitude;
+                            
+                            const forceAngle = angle + Math.PI * 0.5;
+                            const forceStrength = waveIntensity * 0.2;
+                            
+                            totalForceX += Math.cos(forceAngle) * forceStrength;
+                            totalForceY += Math.sin(forceAngle) * forceStrength;
+                        }
+                    }
+                    
+                    if (hasVoiceInput) {
+                        // Apply cymatic forces
+                        star.velocityX += totalForceX;
+                        star.velocityY += totalForceY;
+                        
+                        star.velocityX *= 0.8;
+                        star.velocityY *= 0.8;
+                        
+                        star.x += star.velocityX;
+                        star.y += star.velocityY;
+                        
+                        const totalWaveIntensity = Math.abs(totalForceX) + Math.abs(totalForceY);
+                        star.brightness = star.baseBrightness + totalWaveIntensity * 4;
+                        star.size = (1 + Math.random() * 2) + totalWaveIntensity * 3;
+                    } else {
+                        // Mic on but no voice - still do Tesla effect with orbs
+                        orbs.forEach(orb => {
+                            const distToOrb = Math.sqrt((star.x - orb.x) ** 2 + (star.y - orb.y) ** 2);
+                            if (distToOrb < 120 && distToOrb > 1) {
+                                const orbForce = 0.02 / (distToOrb * 0.05);
+                                const angle = Math.atan2(orb.y - star.y, orb.x - star.x);
+                                star.velocityX += Math.cos(angle) * orbForce;
+                                star.velocityY += Math.sin(angle) * orbForce;
+                                
+                                star.brightness = star.baseBrightness + (1 - distToOrb / 120) * 0.8;
+                                star.size = (1 + Math.random() * 2) + (1 - distToOrb / 120) * 2;
+                            }
+                        });
+                        
+                        star.velocityX *= 0.95;
+                        star.velocityY *= 0.95;
+                        star.x += star.velocityX;
+                        star.y += star.velocityY;
+                    }
+                }
+                
+                // Keep stars on screen with soft boundaries
+                if (star.x < 10) { star.x = 10; star.velocityX = Math.abs(star.velocityX) * 0.5; }
+                if (star.x > 790) { star.x = 790; star.velocityX = -Math.abs(star.velocityX) * 0.5; }
+                if (star.y < 10) { star.y = 10; star.velocityY = Math.abs(star.velocityY) * 0.5; }
+                if (star.y > 590) { star.y = 590; star.velocityY = -Math.abs(star.velocityY) * 0.5; }
+            });
+            
+            renderStars();
+            starFrame = requestAnimationFrame(animateStars);
+        }
+
+        function renderStars() {
+            const starfield = document.getElementById('stars');
+            if (!starfield) return;
+            
+            const starHTML = stars.map(star => {
+                const x = Math.max(0, Math.min(800, star.x));
+                const y = Math.max(0, Math.min(600, star.y));
+                const opacity = Math.min(1, Math.max(0.2, star.brightness));
+                const size = Math.max(0.8, Math.min(4, star.size));
+                return `<circle cx="${x}" cy="${y}" r="${size}" fill="white" opacity="${opacity}" />`;
+            }).join('');
+            
+            starfield.innerHTML = starHTML;
+        }
+
+        function updateOrbs() {
+            const now = Date.now();
+            const elapsed = (now - startTime) / 1000;
+            const beatDur = 60 / tempo;
+            orbs = [];
+
+            tracks.forEach(track => {
+                if (!track.active) return;
+                const period = beatDur * track.rhythm;
+                const progress = (elapsed % period) / period;
+                const pos = getPath(progress, track.path);
+                const dist = Math.sqrt((pos.x - 400) ** 2 + (pos.y - 300) ** 2);
+                
+                if (dist <= 35 && (!lastTriggers[track.id] || now - lastTriggers[track.id] > 150)) {
+                    if (synth) {
+                        const vol = Math.min(track.volume + smoothedAudio * 0.1, 0.5);
+                        synth.triggerAttackRelease(track.note, '8n', Tone.now() + 0.01, vol);
+                        lastTriggers[track.id] = now;
+                    }
+                }
+                orbs.push({ ...pos, color: track.color, id: track.id });
+            });
+            
+            renderOrbs();
+            renderPaths();
+            document.getElementById('centerPoint').setAttribute('r', 20 + smoothedAudio * 15);
+        }
+
+        function renderOrbs() {
+            document.getElementById('orbs').innerHTML = orbs.map(orb => 
+                `<circle cx="${orb.x}" cy="${orb.y}" r="8" fill="${orb.color}" opacity="0.9" 
+                 style="filter: drop-shadow(0 0 10px ${orb.color})" />`
+            ).join('');
+        }
+
+        function renderPaths() {
+            document.getElementById('paths').innerHTML = tracks.filter(t => t.active).map(track => {
+                const points = Array.from({ length: 101 }, (_, i) => {
+                    const pos = getPath(i / 100, track.path);
+                    return `${i === 0 ? 'M' : 'L'} ${pos.x} ${pos.y}`;
+                }).join(' ');
+                return `<path d="${points} Z" fill="none" stroke="${track.color}" stroke-width="1" opacity="0.3" />`;
+            }).join('');
+        }
+
+        function animate() {
+            if (!isPlaying) return;
+            updateOrbs();
+            animFrame = requestAnimationFrame(animate);
+        }
+
+        async function togglePlay() {
+            if (!synth) await initAudio();
+            if (!isPlaying) {
+                startTime = Date.now();
+                isPlaying = true;
+                animate();
+                document.getElementById('playBtn').textContent = 'Pause';
+                document.getElementById('playBtn').className = 'stop';
+            } else {
+                isPlaying = false;
+                if (animFrame) cancelAnimationFrame(animFrame);
+                if (synth) synth.releaseAll();
+                document.getElementById('playBtn').textContent = 'Play';
+                document.getElementById('playBtn').className = 'play';
+            }
+        }
+
+        function togglePrayerMode() {
+            prayerMode = !prayerMode;
+            const btn = document.getElementById('prayerBtn');
+            const canvas = document.getElementById('canvas');
+            
+            if (prayerMode) {
+                btn.textContent = 'Exit Prayer';
+                btn.style.background = '#fbbf24';
+                canvas.style.background = 'linear-gradient(45deg, #1a1a2e, #16213e, #0f3460)';
+                
+                if (tempo > 60) {
+                    tempo = 40;
+                    document.getElementById('tempo').value = 40;
+                }
+                
+                tracks.forEach((track, i) => {
+                    const sacredColors = ['#ffd700', '#ffa500', '#87ceeb', '#dda0dd', '#f0e68c', '#add8e6', '#daa520', '#cd853f', '#b0c4de', '#dda0dd', '#f5deb3', '#98fb98'];
+                    track.color = sacredColors[i % sacredColors.length];
+                });
+                
+            } else {
+                btn.textContent = 'Prayer Mode';
+                btn.style.background = '#8b5cf6';
+                canvas.style.background = 'black';
+                
+                const originalColors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffd93d', '#ff9ff3', '#a8e6cf', '#ffaaa5', '#ff8b94', '#b4a7d6', '#d4a574', '#85dcb0'];
+                tracks.forEach((track, i) => {
+                    track.color = originalColors[i % originalColors.length] || track.color;
+                });
+            }
+            
+            renderTracks();
+        }
+
+        function takeScreenshot() {
+            const svg = document.getElementById('canvas');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Set canvas size to match SVG
+            canvas.width = 800;
+            canvas.height = 600;
+            
+            // Create a data URL from the SVG
+            const svgData = new XMLSerializer().serializeToString(svg);
+            const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(svgBlob);
+            
+            const img = new Image();
+            img.onload = function() {
+                // Draw the SVG onto the canvas
+                ctx.drawImage(img, 0, 0);
+                
+                // Convert canvas to blob and download
+                canvas.toBlob(function(blob) {
+                    const link = document.createElement('a');
+                    link.download = `cymatic-cosmos-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+                    link.href = URL.createObjectURL(blob);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    // Clean up
+                    URL.revokeObjectURL(url);
+                    URL.revokeObjectURL(link.href);
+                }, 'image/png');
+            };
+            
+            img.onerror = function() {
+                // Fallback method for browsers that don't support SVG in images
+                console.log('Using fallback screenshot method...');
+                fallbackScreenshot();
+            };
+            
+            img.src = url;
+        }
+
+        function fallbackScreenshot() {
+            // Alternative method using html2canvas-like approach
+            const svg = document.getElementById('canvas');
+            const rect = svg.getBoundingClientRect();
+            
+            // Create a new canvas
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 800;
+            canvas.height = 600;
+            
+            // Fill background
+            const bgStyle = window.getComputedStyle(svg).background;
+            if (bgStyle && bgStyle !== 'rgba(0, 0, 0, 0)') {
+                ctx.fillStyle = bgStyle;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = prayerMode ? 
+                    'linear-gradient(45deg, #1a1a2e, #16213e, #0f3460)' : 'black';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            // This is a simplified version - for full implementation we'd need to
+            // recreate the SVG elements as canvas drawing commands
+            ctx.fillStyle = 'white';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Screenshot captured!', 400, 300);
+            ctx.fillText('Full SVG rendering coming soon...', 400, 330);
+            
+            // Download the canvas
+            canvas.toBlob(function(blob) {
+                const link = document.createElement('a');
+                link.download = `cymatic-cosmos-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
+                link.href = URL.createObjectURL(blob);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+            }, 'image/png');
+        }
+
+        function savePreset() {
+            const presetName = prompt('Name your preset:', 
+                `Cosmic Creation ${new Date().toLocaleString()}`);
+            
+            if (!presetName) return;
+            
+            const preset = {
+                name: presetName,
+                version: "1.0",
+                created: new Date().toISOString(),
+                settings: {
+                    tempo: tempo,
+                    voiceInfluence: voiceInfluence,
+                    prayerMode: prayerMode,
+                    tracks: tracks.map(track => ({
+                        id: track.id,
+                        rhythm: track.rhythm,
+                        active: track.active,
+                        note: track.note,
+                        volume: track.volume,
+                        color: track.color,
+                        path: track.path
+                    }))
+                }
+            };
+            
+            // Download as JSON file
+            const blob = new Blob([JSON.stringify(preset, null, 2)], 
+                { type: 'application/json' });
+            const link = document.createElement('a');
+            link.download = `${presetName.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.json`;
+            link.href = URL.createObjectURL(blob);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+            
+            // Also save to localStorage for quick access
+            const savedPresets = JSON.parse(localStorage.getItem('cymaticPresets') || '[]');
+            savedPresets.unshift(preset); // Add to beginning
+            if (savedPresets.length > 10) savedPresets.pop(); // Keep only 10 recent
+            localStorage.setItem('cymaticPresets', JSON.stringify(savedPresets));
+            
+            alert(`✨ Preset "${presetName}" saved!\n\n` +
+                  `📁 Downloaded as: ${link.download}\n` +
+                  `💾 Also saved locally for quick access`);
+        }
+
+        function loadPreset() {
+            // Show options: file upload or recent presets
+            const savedPresets = JSON.parse(localStorage.getItem('cymaticPresets') || '[]');
+            
+            if (savedPresets.length > 0) {
+                let options = "Choose how to load preset:\n\n";
+                options += "0 - Upload preset file\n";
+                savedPresets.forEach((preset, i) => {
+                    options += `${i + 1} - ${preset.name} (${new Date(preset.created).toLocaleDateString()})\n`;
+                });
+                
+                const choice = prompt(options + "\nEnter number:");
+                
+                if (choice === null) return;
+                
+                if (choice === '0') {
+                    document.getElementById('presetFileInput').click();
+                } else {
+                    const index = parseInt(choice) - 1;
+                    if (index >= 0 && index < savedPresets.length) {
+                        applyPreset(savedPresets[index]);
+                    } else {
+                        alert('Invalid selection');
+                    }
+                }
+            } else {
+                document.getElementById('presetFileInput').click();
+            }
+        }
+
+        function applyPreset(preset) {
+            try {
+                if (!preset.settings) {
+                    throw new Error('Invalid preset format');
+                }
+                
+                // Apply settings
+                tempo = preset.settings.tempo || 120;
+                voiceInfluence = preset.settings.voiceInfluence || 0.5;
+                
+                // Update UI controls
+                document.getElementById('tempo').value = tempo;
+                document.getElementById('voice').value = voiceInfluence;
+                
+                // Apply tracks
+                if (preset.settings.tracks) {
+                    preset.settings.tracks.forEach(savedTrack => {
+                        const track = tracks.find(t => t.id === savedTrack.id);
+                        if (track) {
+                            track.rhythm = savedTrack.rhythm;
+                            track.active = savedTrack.active;
+                            track.note = savedTrack.note;
+                            track.volume = savedTrack.volume;
+                            track.color = savedTrack.color;
+                            track.path = savedTrack.path;
+                        }
+                    });
+                }
+                
+                // Apply prayer mode if needed
+                if (preset.settings.prayerMode && !prayerMode) {
+                    togglePrayerMode();
+                } else if (!preset.settings.prayerMode && prayerMode) {
+                    togglePrayerMode();
+                }
+                
+                // Refresh the UI
+                renderTracks();
+                
+                alert(`🌟 Preset "${preset.name}" loaded successfully!\n\n` +
+                      `Created: ${new Date(preset.created).toLocaleString()}`);
+                
+            } catch (error) {
+                alert('❌ Error loading preset: ' + error.message);
+            }
+        }
+
+        function handlePresetFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const preset = JSON.parse(e.target.result);
+                    applyPreset(preset);
+                } catch (error) {
+                    alert('❌ Error reading preset file: Invalid JSON format');
+                }
+            };
+            reader.readAsText(file);
+            
+            // Clear the input
+            event.target.value = '';
+        }
+
+        function renderTracks() {
+            document.getElementById('tracks').innerHTML = tracks.map(track => `
+                <div class="track" style="border-left: 4px solid ${track.color};">
+                    <strong style="color: ${track.color}">Track ${track.id} (${track.rhythm})</strong>
+                    <button onclick="toggleTrack(${track.id})" style="background: ${track.active ? '#059669' : '#666'}; color: white; margin-left: 10px;">
+                        ${track.active ? 'ON' : 'OFF'}
+                    </button><br>
+                    Rhythm: <input type="range" min="2" max="12" value="${track.rhythm}" onchange="updateTrack(${track.id}, 'rhythm', this.value)">
+                    Path: <select onchange="updateTrack(${track.id}, 'path', this.value)">
+                        <option value="0" ${track.path === 0 ? 'selected' : ''}>Figure-8</option>
+                        <option value="1" ${track.path === 1 ? 'selected' : ''}>Horizontal</option>
+                        <option value="2" ${track.path === 2 ? 'selected' : ''}>Vertical</option>
+                        <option value="3" ${track.path === 3 ? 'selected' : ''}>Infinity</option>
+                        <option value="4" ${track.path === 4 ? 'selected' : ''}>Spiral</option>
+                        <option value="5" ${track.path === 5 ? 'selected' : ''}>Rose</option>
+                    </select>
+                    Note: <select onchange="updateTrack(${track.id}, 'note', this.value)">
+                        ${['C4','D4','E4','F4','G4','A4','B4','C5'].map(note => 
+                            `<option value="${note}" ${track.note === note ? 'selected' : ''}>${note}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+            `).join('');
+        }
+
+        function toggleTrack(id) {
+            const track = tracks.find(t => t.id === id);
+            track.active = !track.active;
+            renderTracks();
+        }
+
+        function updateTrack(id, prop, val) {
+            const track = tracks.find(t => t.id === id);
+            track[prop] = prop === 'rhythm' || prop === 'path' ? parseInt(val) : val;
+            renderTracks();
+        }
+
+        document.getElementById('playBtn').onclick = togglePlay;
+        document.getElementById('micBtn').onclick = () => micEnabled ? stopMic() : setupMic();
+        document.getElementById('prayerBtn').onclick = togglePrayerMode;
+        document.getElementById('screenshotBtn').onclick = takeScreenshot;
+        document.getElementById('savePresetBtn').onclick = savePreset;
+        document.getElementById('loadPresetBtn').onclick = loadPreset;
+        document.getElementById('presetFileInput').onchange = handlePresetFile;
+        document.getElementById('tempo').oninput = (e) => tempo = parseInt(e.target.value);
+        document.getElementById('voice').oninput = (e) => voiceInfluence = parseFloat(e.target.value);
+
+        // Initialize immediately when page loads
+        initStars();
+        renderTracks();
+        renderStars();
+        animateStars();
+    </script>
+</body>
+</html>

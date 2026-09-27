@@ -6,13 +6,27 @@
 
 ## 🚀 Try It Now!
 
-**[🌌 Launch Cymatic Cosmos](https://jkh2.github.io/cymatic-cosmos/)**  
-*Experience the cosmic symphony in your browser - no installation required!*
+**[🌌 Launch Cymatic Cosmos](https://jkh2.github.io/cymatic-cosmos/)**
+*Opens in your browser, no installation required. Press Play, then drag anywhere to stir the smoke.*
 
-![Cymatic Cosmos Screenshot](screenshot1.png)
-*Tesla coil effects and polyrhythmic orbs creating cosmic harmony*
+![Cymatic Cosmos, smoke edition](screenshot-smoke.png)
+*Twelve polyrhythmic voices trail colored smoke through a live Navier-Stokes fluid. Each note presses a Chladni plate figure into the smoke as its orb crosses the center.*
 
-> 💡 **Tip**: Allow microphone access when prompted to experience the full voice-reactive starfield magic!
+### What's new in the smoke edition
+- **Living smoke:** a GPU fluid simulation on a black field, with a gentle current that quickens with tempo
+- **Orbs paint the smoke:** each voice leaves a comet of its own color along its sacred curve
+- **Cymatic notes:** every note imprints the Chladni pattern for its pitch, then the current carries it away
+- **Stir it yourself:** drag anywhere to stir; the **Fade** slider sets how fast the smoke clears
+- **Voice and Prayer:** sing to draw your pitch as a live plate; in Prayer mode a held note is answered in harmony
+
+**[🕰️ Open the classic version](https://jkh2.github.io/cymatic-cosmos/classic/)** (the original 2D starfield instrument, preserved)
+
+Source for the smoke edition is on the [`rebuild/claude-smoke`](https://github.com/jkh2/cymatic-cosmos/tree/rebuild/claude-smoke) branch.
+
+![Cymatic Cosmos classic](screenshot1.png)
+*The classic edition: Tesla coil effects and polyrhythmic orbs creating cosmic harmony*
+
+> 💡 **Tip**: Allow microphone access when prompted to experience the full voice-reactive magic!
 
 ---
 
