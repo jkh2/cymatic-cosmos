@@ -39,7 +39,7 @@ vec2 clampVel(vec2 v, float maxV) {
 }
 `;
 
-export const MAX_SPLATS = 40;
+export const MAX_SPLATS = 56;
 
 /**
  * Many gaussian splats in one pass. For dye the add saturates as a cell
@@ -92,6 +92,7 @@ uniform float uAspect;
 uniform vec4 uMode;
 uniform vec3 uColor;
 uniform float uCap;
+uniform float uSpread;
 ${CHLADNI}
 void main() {
   vec4 base = texture(uTarget, vUv);
@@ -102,7 +103,8 @@ void main() {
   float f = chladni(q, uMode.x, uMode.y, uMode.w < 0.0 ? -1.0 : 1.0);
   float w = fwidth(f) * 1.8 + 0.02;
   float line = 1.0 - smoothstep(0.0, w, abs(f));
-  float mask = smoothstep(1.0, 0.55, r);
+  // The figure keeps tiling past the plate and fades softly into the field.
+  float mask = exp(-pow(r / uSpread, 2.0) * 2.4) * smoothstep(0.0, 0.12, r);
   vec3 add = uColor * line * mask * abs(uMode.w);
   float m = max(base.r, max(base.g, base.b));
   add *= 1.0 / (1.0 + m * m * 1.2);
@@ -317,6 +319,7 @@ uniform vec2 uCenter;
 uniform vec4 uGlowPos[MAXG];
 uniform vec4 uGlowMode[MAXG];
 uniform vec3 uGlowColor[MAXG];
+uniform float uGlowSpread[MAXG];
 ${BILERP}
 ${CHLADNI}
 float hash(vec2 p) {
@@ -359,12 +362,13 @@ void main() {
     d.x *= uAspect;
     vec2 q = rot2(d / uGlowPos[i].z, uGlowPos[i].w);
     float r = length(q);
-    if (r > 1.05) continue;
+    float spread = uGlowSpread[i];
+    if (r > spread * 1.6) continue;
     float f = chladni(q, uGlowMode[i].x, uGlowMode[i].y, uGlowMode[i].z);
     float w = fwidth(f);
     float core = 1.0 - smoothstep(0.0, w * 1.3, abs(f));
     float halo = 1.0 - smoothstep(0.0, w * 5.0, abs(f));
-    float mask = smoothstep(1.0, 0.45, r);
+    float mask = exp(-pow(r / spread, 2.0) * 2.0);
     col += uGlowColor[i] * (core * 0.85 + halo * 0.22) * mask * k;
   }
 

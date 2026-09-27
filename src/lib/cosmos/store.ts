@@ -84,6 +84,7 @@ export const useCosmos = create<{
     try {
       await startMic();
       set({ mic: true, micError: null });
+      get().flash("Mic on. Speak, sing, or hum: your voice blows smoke out from the center.");
     } catch {
       set({ mic: false, micError: "Microphone stayed closed." });
     }

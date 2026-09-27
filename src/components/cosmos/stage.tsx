@@ -18,11 +18,25 @@ const STIR_REACH = 2 * CSS_INCH;
 
 /** Center-gate hit radius and re-arm distance, in score pixels. */
 const HIT_RADIUS = 14;
+/** Chladni plate radius for notes, and the smaller voice plate, in score pixels. */
+const PLATE = 170;
+/** How many plate radii a note's figure reaches before fading into the field. */
+const NOTE_SPREAD = 2.6;
+const VOICE_PLATE = 150;
 const REARM = 96;
 
 function hexRgb(hex: string): RGB {
   const n = Number.parseInt(hex.replace("#", ""), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+function hslRgb(h: number, sat: number, l: number): RGB {
+  const a = sat * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h * 12) % 12;
+    return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+  };
+  return [f(0), f(8), f(4)];
 }
 
 function closestToCenter(x0: number, y0: number, x1: number, y1: number) {
@@ -392,7 +406,8 @@ export function Stage() {
       const gate = uvOf(toScreen(L, 400, 300));
       const mode = modeFor(track.note);
       const rotation = index * 0.2618;
-      const plate = (150 * L.s) / L.h;
+      // The plate reaches out across the orbits, not just the gate.
+      const plate = (PLATE * L.s) / L.h;
       engine.pattern({
         x: gate.x,
         y: gate.y,
@@ -400,8 +415,9 @@ export function Stage() {
         n: mode.n,
         m: mode.m,
         rotation,
-        amount: 0.9 * mode.sign,
+        amount: 0.42 * mode.sign,
         color: rgb,
+        spread: NOTE_SPREAD,
       });
       const speed = Math.hypot(velScreen.x, velScreen.y) || 1;
       engine.splat(
@@ -413,6 +429,20 @@ export function Stage() {
         (26 * L.s) / L.h,
       );
       void speed;
+      // A soft outward breath carries the pressed figure into the field.
+      for (let k = 0; k < 8; k++) {
+        if (engine.splatRoom <= 2) break;
+        const ang = rotation + (k / 8) * Math.PI * 2;
+        const r0 = plate * 0.7;
+        engine.splat(
+          gate.x + (Math.cos(ang) * r0) / engine.aspect,
+          gate.y + Math.sin(ang) * r0,
+          (Math.cos(ang) * 0.55) / engine.aspect,
+          Math.sin(ang) * 0.55,
+          [0, 0, 0],
+          plate * 0.4,
+        );
+      }
       imprints.push({ t: clock, glow: { rotation, n: mode.n, m: mode.m, sign: mode.sign, color: rgb } });
       if (imprints.length > 5) imprints.shift();
     };
@@ -522,43 +552,65 @@ export function Stage() {
 
       // Voice: a breathing swirl at the gate, and the sung pitch drawn as a plate.
       const gateUv = uvOf(toScreen(L, 400, 300));
-      const plateR = (150 * L.s) / L.h;
+      const plateR = (PLATE * L.s) / L.h;
+      const voiceR = (VOICE_PLATE * L.s) / L.h;
       const glows: Glow[] = [];
       const amp = ear.smoothed * state.voice;
-      if (ear.listening && amp > 0.03) {
-        const hue: RGB = state.prayer ? [1.0, 0.8, 0.35] : [0.7, 0.8, 1.0];
-        const ang = clock * 2.4;
-        for (let k = 0; k < 2; k++) {
-          const aa = ang + k * Math.PI;
-          const rr = plateR * 0.55;
+      if (ear.listening && amp > 0.035) {
+        // Your pitch picks the color: the twelve notes walk the color wheel.
+        let voiceRgb: RGB = [0.72, 0.82, 1.0];
+        let midi = -1;
+        if (ear.pitch > 0) {
+          midi = Math.round(12 * Math.log2(ear.pitch / 440) + 69);
+          voiceRgb = hslRgb((((midi % 12) + 12) % 12) / 12, 0.75, 0.6);
+        }
+        if (state.prayer) voiceRgb = [voiceRgb[0] * 0.4 + 0.6, voiceRgb[1] * 0.4 + 0.45, voiceRgb[2] * 0.4 + 0.12];
+
+        // Ten jets ring the center, one per voice band from low to high. The
+        // shape of the sound decides which jets blow; loudness decides how hard.
+        const jets = ear.bands.length;
+        const spin = clock * 0.35;
+        for (let k = 0; k < jets; k++) {
+          const band = ear.bands[k];
+          const push = band * amp;
+          if (push < 0.02 || engine.splatRoom <= 1) continue;
+          const ang = spin + (k / jets) * Math.PI * 2;
+          const dx = Math.cos(ang);
+          const dy = Math.sin(ang);
+          const r0 = voiceR * 0.3;
+          const speed = 0.35 + push * 2.2;
+          const ink = Math.min(0.5, push * 0.55);
           engine.splat(
-            gateUv.x + (Math.cos(aa) * rr) / engine.aspect,
-            gateUv.y + Math.sin(aa) * rr,
-            -Math.sin(aa) * amp * 0.9,
-            Math.cos(aa) * amp * 0.9,
-            [hue[0] * amp * 0.5, hue[1] * amp * 0.5, hue[2] * amp * 0.5],
-            plateR * 0.25,
+            gateUv.x + (dx * r0) / engine.aspect,
+            gateUv.y + dy * r0,
+            (dx * speed) / engine.aspect,
+            dy * speed,
+            [voiceRgb[0] * ink, voiceRgb[1] * ink, voiceRgb[2] * ink],
+            voiceR * (0.12 + push * 0.12),
           );
         }
-        if (ear.pitch > 0) {
-          const midi = Math.round(12 * Math.log2(ear.pitch / 440) + 69);
+        // A soft glow of breath at the very center.
+        const core = Math.min(0.3, amp * 0.25);
+        engine.splat(gateUv.x, gateUv.y, 0, 0, [voiceRgb[0] * core, voiceRgb[1] * core, voiceRgb[2] * core], voiceR * 0.22);
+
+        if (midi >= 0) {
           const [ma, mb] = MODES[((midi % 12) + 12) % 12];
           const lift = Math.max(0, Math.min(2, Math.floor(midi / 12) - 3));
           const vg: Glow = {
             x: gateUv.x,
             y: gateUv.y,
-            radius: plateR * 1.15,
+            radius: voiceR * 1.6,
             rotation: 0,
             n: ma + lift,
             m: mb + lift,
             sign: midi % 2 === 0 ? 1 : -1,
-            intensity: Math.min(0.9, amp * 3),
-            color: hue,
+            intensity: Math.min(0.9, amp * 2),
+            color: voiceRgb,
           };
           glows.push(vg);
-          if (clock - voiceImprintAt > 0.35 && amp > 0.06) {
+          if (clock - voiceImprintAt > 0.35 && amp > 0.08) {
             voiceImprintAt = clock;
-            engine.pattern({ ...vg, amount: 0.25 * vg.sign, radius: vg.radius });
+            engine.pattern({ ...vg, amount: 0.3 * vg.sign, radius: vg.radius });
           }
         }
       }
@@ -566,16 +618,17 @@ export function Stage() {
 
       for (let i = imprints.length - 1; i >= 0; i--) {
         const age = clock - imprints[i].t;
-        if (age > 1.6) {
+        if (age > 2.2) {
           imprints.splice(i, 1);
           continue;
         }
-        const k = age / 1.6;
+        const k = age / 2.2;
         glows.push({
           ...imprints[i].glow,
           x: gateUv.x,
           y: gateUv.y,
-          radius: plateR * (1 + k * 0.25),
+          radius: plateR,
+          spread: NOTE_SPREAD * (0.6 + k * 0.9),
           intensity: (1 - k) ** 2 * 0.9,
         });
       }

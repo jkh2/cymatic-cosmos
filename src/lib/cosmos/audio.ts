@@ -8,6 +8,8 @@ export const ear = {
   /** Detected sung pitch in Hz, 0 when none is clear. */
   pitch: 0,
   freq: new Float32Array(32),
+  /** Ten log-spaced voice bands, 90 Hz to 4 kHz, each 0..1. */
+  bands: new Float32Array(10),
   listening: false,
 };
 
@@ -104,23 +106,44 @@ function detectPitch(buf: Float32Array, sampleRate: number) {
   return sampleRate / bestLag;
 }
 
+const BAND_EDGES = Array.from({ length: 11 }, (_, i) => 90 * (4000 / 90) ** (i / 10));
+
+/** Fast rise, slow fall: a voice meter that feels alive. */
+function follow(prev: number, next: number) {
+  return prev + (next - prev) * (next > prev ? 0.35 : 0.07);
+}
+
 export function sampleEar() {
   if (!analyser || !bins || !wave || !ear.listening) {
     ear.level *= 0.9;
     ear.smoothed *= 0.9;
+    ear.bands.forEach((v, i) => (ear.bands[i] = v * 0.9));
     ear.pitch = 0;
     return;
   }
+  // Loudness from RMS in decibels. Averaging raw FFT bins, as before, barely
+  // moves for speech, which is why the mic seemed to do nothing.
+  analyser.getFloatTimeDomainData(wave as Float32Array<ArrayBuffer>);
+  let sq = 0;
+  for (let i = 0; i < wave.length; i++) sq += wave[i] * wave[i];
+  const db = 20 * Math.log10(Math.sqrt(sq / wave.length) + 1e-8);
+  ear.level = Math.min(1, Math.max(0, (db + 58) / 40));
+  ear.smoothed = follow(ear.smoothed, ear.level);
+
   analyser.getByteFrequencyData(bins as Uint8Array<ArrayBuffer>);
-  let sum = 0;
-  for (let i = 0; i < bins.length; i++) sum += bins[i];
-  ear.level = sum / bins.length / 255;
-  ear.smoothed = ear.smoothed * 0.88 + ear.level * 0.12;
+  const hzPerBin = analyser.context.sampleRate / analyser.fftSize;
+  for (let b = 0; b < 10; b++) {
+    const lo = Math.max(1, Math.floor(BAND_EDGES[b] / hzPerBin));
+    const hi = Math.max(lo + 1, Math.ceil(BAND_EDGES[b + 1] / hzPerBin));
+    let peak = 0;
+    for (let i = lo; i < hi && i < bins.length; i++) peak = Math.max(peak, bins[i]);
+    const v = Math.min(1, Math.max(0, (peak / 255 - 0.35) / 0.55));
+    ear.bands[b] = follow(ear.bands[b], v);
+  }
   for (let i = 0; i < 32; i++) {
     const bin = Math.floor((i / 32) * bins.length);
     ear.freq[i] = ear.freq[i] * 0.8 + (bins[bin] / 255) * 0.2;
   }
-  analyser.getFloatTimeDomainData(wave as Float32Array<ArrayBuffer>);
   const hz = detectPitch(wave, analyser.context.sampleRate);
   ear.pitch = hz > 0 ? (ear.pitch > 0 ? ear.pitch * 0.6 + hz * 0.4 : hz) : 0;
 }

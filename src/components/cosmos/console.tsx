@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Camera,
   Droplets,
@@ -13,6 +13,7 @@ import {
   Wind,
 } from "lucide-react";
 import { captureCosmos } from "@/components/cosmos/stage";
+import { ear } from "@/lib/cosmos/audio";
 import { NOTES, PATHS, PRESET_KEY, isPreset, type Preset } from "@/lib/cosmos/model";
 import { readPresets, useCosmos } from "@/lib/cosmos/store";
 
@@ -42,6 +43,26 @@ function Chip({
       {children}
     </button>
   );
+}
+
+/** A ring that swells with your voice, so you can see the mic is hearing you. */
+function MicMeter() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const el = ref.current;
+      if (el) {
+        const v = Math.min(1, ear.smoothed * 1.6);
+        el.style.transform = `scale(${1 + v * 1.4})`;
+        el.style.opacity = String(0.15 + v * 0.85);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return <span ref={ref} aria-hidden className="absolute -inset-1.5 rounded-full border-2 border-void/70" />;
 }
 
 function Segmented<T extends string>({
@@ -140,9 +161,15 @@ export function Console() {
         </h1>
         <p className="text-xs text-mist md:text-sm">James Keith Harwood II</p>
       </header>
+      <div data-chrome className="pointer-events-auto absolute top-4 right-4 md:top-6 md:right-6">
+        <Chip label="Capture a picture" onClick={captureCosmos}>
+          <Camera size={18} />
+          <span className="hidden sm:inline">Capture</span>
+        </Chip>
+      </div>
 
       <p
-        className={`absolute inset-x-0 bottom-[8.5rem] px-6 text-center text-xs text-mist transition-opacity duration-1000 sm:bottom-28 xl:bottom-24 ${
+        className={`absolute inset-x-0 bottom-[8.5rem] px-6 text-center text-xs text-mist transition-opacity duration-1000 sm:bottom-32 xl:bottom-24 ${
           playing && !micError && !notice ? "opacity-0" : "opacity-80"
         }`}
       >
@@ -213,16 +240,16 @@ export function Console() {
             },
           ]}
         />
-        <Chip pressed={mic} label={mic ? "Stop listening" : "Listen"} onClick={() => void toggleMic()}>
-          {mic ? <MicOff size={18} /> : <Mic size={18} />}
-          <span className="hidden sm:inline">{mic ? "Listening" : "Listen"}</span>
+        <Chip pressed={mic} label={mic ? "Turn microphone off" : "Turn microphone on: your voice moves the smoke"} onClick={() => void toggleMic()}>
+          <span className="relative inline-flex">
+            {mic ? <MicMeter /> : null}
+            {mic ? <Mic size={18} /> : <MicOff size={18} />}
+          </span>
+          <span className="hidden sm:inline">{mic ? "Mic on" : "Mic"}</span>
         </Chip>
         <Chip pressed={prayer} label="Prayer" onClick={togglePrayer}>
           <SunMedium size={18} />
           <span className="hidden sm:inline">Prayer</span>
-        </Chip>
-        <Chip label="Capture" onClick={captureCosmos}>
-          <Camera size={18} />
         </Chip>
       </nav>
 

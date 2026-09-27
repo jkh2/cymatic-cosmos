@@ -34,6 +34,8 @@ export interface Glow {
   sign: number;
   intensity: number;
   color: [number, number, number];
+  /** How far the figure reaches, in plate radii, before it fades out. */
+  spread?: number;
 }
 
 interface FBO {
@@ -64,6 +66,7 @@ interface PatternJob {
   rotation: number;
   amount: number;
   color: [number, number, number];
+  spread?: number;
 }
 
 const QUALITY: Record<FluidQuality, { sim: number; dye: number; pressure: number }> = {
@@ -193,6 +196,7 @@ export class FluidEngine {
   private glowPos = new Float32Array(S.MAX_GLOWS * 4);
   private glowMode = new Float32Array(S.MAX_GLOWS * 4);
   private glowColor = new Float32Array(S.MAX_GLOWS * 3);
+  private glowSpread = new Float32Array(S.MAX_GLOWS);
   destroyed = false;
 
   constructor(canvas: HTMLCanvasElement, params: FluidParams) {
@@ -430,6 +434,7 @@ export class FluidEngine {
       gl.uniform1f(p.uniforms.uRadius, job.radius);
       gl.uniform4f(p.uniforms.uMode, job.n, job.m, job.rotation, job.amount);
       gl.uniform3f(p.uniforms.uColor, job.color[0], job.color[1], job.color[2]);
+      gl.uniform1f(p.uniforms.uSpread, job.spread ?? 1);
       this.blit(this.dye.write);
       this.dye.swap();
     }
@@ -573,14 +578,17 @@ export class FluidEngine {
     this.glowPos.fill(0);
     this.glowMode.fill(0);
     this.glowColor.fill(0);
+    this.glowSpread.fill(1);
     this.glows.slice(0, S.MAX_GLOWS).forEach((g, i) => {
       this.glowPos.set([g.x, g.y, Math.max(g.radius, 1e-4), g.rotation], i * 4);
       this.glowMode.set([g.n, g.m, g.sign, g.intensity], i * 4);
       this.glowColor.set(g.color, i * 3);
+      this.glowSpread[i] = g.spread ?? 1;
     });
     gl.uniform4fv(p.uniforms.uGlowPos, this.glowPos);
     gl.uniform4fv(p.uniforms.uGlowMode, this.glowMode);
     gl.uniform3fv(p.uniforms.uGlowColor, this.glowColor);
+    gl.uniform1fv(p.uniforms.uGlowSpread, this.glowSpread);
     this.blit(null);
   }
 
