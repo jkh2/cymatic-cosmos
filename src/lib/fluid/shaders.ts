@@ -382,3 +382,93 @@ void main() {
   fragColor = vec4(col, 1.0);
 }
 `;
+
+const RELIEF_HEIGHT = `
+float heightAt(sampler2D tex, vec2 uv, float lod) {
+  vec3 c = textureLod(tex, uv, lod).rgb;
+  float peak = max(c.r, max(c.g, c.b));
+  return smoothstep(0.0, 1.0, peak);
+}
+`;
+
+/** The relief sheet: the finished smoke image, lifted by its own brightness. */
+export const TERRAIN_VERT = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 aPos;
+uniform sampler2D uColor;
+uniform mat4 uViewProj;
+uniform float uAspect;
+uniform float uHeight;
+uniform float uLod;
+out vec2 vUv;
+out vec3 vWorld;
+${RELIEF_HEIGHT}
+void main() {
+  vUv = aPos;
+  float h = heightAt(uColor, aPos, uLod);
+  vec3 world = vec3((aPos.x - 0.5) * uAspect, h * uHeight, 0.5 - aPos.y);
+  vWorld = world;
+  gl_Position = uViewProj * vec4(world, 1.0);
+}
+`;
+
+export const TERRAIN_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUv;
+in vec3 vWorld;
+out vec4 fragColor;
+uniform sampler2D uColor;
+uniform vec2 uTexel;
+uniform float uAspect;
+uniform float uHeight;
+uniform float uLod;
+uniform vec3 uEye;
+${RELIEF_HEIGHT}
+void main() {
+  vec3 c = texture(uColor, vUv).rgb;
+  vec2 e = uTexel * 3.5;
+  float hu = (heightAt(uColor, vUv + vec2(e.x, 0.0), uLod) - heightAt(uColor, vUv - vec2(e.x, 0.0), uLod)) / (2.0 * e.x);
+  float hv = (heightAt(uColor, vUv + vec2(0.0, e.y), uLod) - heightAt(uColor, vUv - vec2(0.0, e.y), uLod)) / (2.0 * e.y);
+  vec3 n = normalize(vec3(-uHeight * hu / uAspect, 1.0, uHeight * hv));
+
+  vec3 L = normalize(vec3(-0.35, 0.85, 0.45));
+  vec3 V = normalize(uEye - vWorld);
+  float diff = max(dot(n, L), 0.0);
+  float spec = pow(max(dot(reflect(-L, n), V), 0.0), 28.0);
+  float rim = pow(1.0 - max(dot(n, V), 0.0), 3.0);
+
+  // The smoke glows on its own; light only sculpts it.
+  vec3 col = c * (0.5 + 0.75 * diff) + (c + 0.08) * spec * 0.55 + c * rim * 0.35;
+  float fog = exp(-max(length(uEye - vWorld) - 1.2, 0.0) * 0.55);
+  fragColor = vec4(col * fog, 1.0);
+}
+`;
+
+/** Stars behind the sheet when the camera tilts past the horizon. */
+export const SKY = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+uniform float uTime;
+uniform float uStarScale;
+float hash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+void main() {
+  float cs = 7.0 * uStarScale;
+  vec2 px = gl_FragCoord.xy;
+  vec2 cell = floor(px / cs);
+  float h = hash(cell + 17.0);
+  vec3 col = vec3(0.0);
+  if (h > 0.992) {
+    vec2 jitter = vec2(hash(cell + 7.1), hash(cell + 3.7)) - 0.5;
+    vec2 c = (cell + 0.5 + jitter * 0.6) * cs;
+    float d = length(px - c) / uStarScale;
+    float tw = 0.55 + 0.45 * sin(uTime * (0.5 + h * 2.0) + h * 91.0);
+    col = vec3(0.78, 0.84, 1.0) * exp(-d * d / 0.8) * tw * 0.45;
+  }
+  fragColor = vec4(col, 1.0);
+}
+`;

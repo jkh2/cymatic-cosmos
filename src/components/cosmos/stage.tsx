@@ -3,6 +3,7 @@ import { ear, listenForPrayer, sampleEar, triggerNote } from "@/lib/cosmos/audio
 import { noteToMidi, pointOnPath, type Track } from "@/lib/cosmos/model";
 import { useCosmos } from "@/lib/cosmos/store";
 import { FluidEngine, type FluidParams, type Glow } from "@/lib/fluid/engine";
+import { project, screenToUv, uvToWorld, viewProj, type Cam } from "@/lib/cosmos/camera";
 
 type RGB = [number, number, number];
 
@@ -29,6 +30,9 @@ function hexRgb(hex: string): RGB {
   const n = Number.parseInt(hex.replace("#", ""), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
+
+const clampDist = (d: number) => Math.min(3.2, Math.max(0.4, d));
+const clampPitch = (p: number) => Math.min(Math.PI / 2 - 0.01, Math.max(0.16, p));
 
 function hslRgb(h: number, sat: number, l: number): RGB {
   const a = sat * Math.min(l, 1 - l);
@@ -214,8 +218,48 @@ export function Stage() {
     let strum = 0;
     const fixedDt = new URLSearchParams(window.location.search).has("simdt") ? 1 / 60 : 0;
 
-    // ---- stirring --------------------------------------------------------
-    const pointers = new Map<number, { x: number; y: number; t: number; color: RGB }>();
+    // ---- camera (relief view) --------------------------------------------
+    const FOV = (42 * Math.PI) / 180;
+    const FIT = 0.5 / Math.tan(FOV / 2); // top-down distance that frames the sheet like the flat view
+    const TILT = (52 * Math.PI) / 180;
+    const cam: Cam = { yaw: 0, pitch: Math.PI / 2 - 0.001, dist: FIT, target: [0, 0, 0], fov: FOV };
+    const goal = { yaw: 0, pitch: TILT, dist: FIT * 0.92 };
+    let mix = 0; // 0 flat .. 1 full relief
+    let vp: Float32Array | null = null;
+    let lastTouchCam = -1e9;
+    const RELIEF_HEIGHT = 0.15;
+    const resetView = () => {
+      goal.yaw = 0;
+      goal.pitch = TILT;
+      goal.dist = FIT * 0.92;
+    };
+    const enterRelief = () => {
+      if (!useCosmos.getState().relief) useCosmos.getState().setRelief(true);
+    };
+
+    /** Flat screen point (CSS px) → where it appears now, lifted to the score plane in relief. */
+    const view = (sx: number, sy: number, lift = 0.45) => {
+      if (!vp || mix <= 0.001) return { x: sx, y: sy, k: 1 };
+      const w = uvToWorld(sx / L.w, 1 - sy / L.h, engine.aspect, RELIEF_HEIGHT * mix * lift);
+      return project(vp, L.w, L.h, w, cam.dist) ?? { x: -9999, y: -9999, k: 0 };
+    };
+    const at = (x: number, y: number, lift?: number) => {
+      const s = toScreen(L, x, y);
+      return view(s.x, s.y, lift);
+    };
+    /** Screen pixel → sheet uv, through the camera when tilted. */
+    const pick = (cx: number, cy: number) => {
+      if (mix <= 0.001) return { x: cx / L.w, y: 1 - cy / L.h };
+      const uv = screenToUv(cam, L.w, L.h, cx, cy, engine.aspect);
+      if (!uv || uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return null;
+      return uv;
+    };
+
+    // ---- stirring and camera gestures --------------------------------------
+    type Grip = { x: number; y: number; t: number; color: RGB; uv: { x: number; y: number } | null; orbit: boolean };
+    const pointers = new Map<number, Grip>();
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch = 0;
     let colorCursor = 0;
     const stirColor = (): RGB => {
       const tracks = useCosmos.getState().tracks.filter((t) => t.active);
@@ -225,42 +269,98 @@ export function Stage() {
     };
     const onDown = (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest("[data-chrome]")) return;
+      if (e.pointerType === "touch") {
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size === 2) {
+          // Two fingers: this becomes a camera gesture, and any stir stops.
+          pointers.clear();
+          const [p1, p2] = [...touches.values()];
+          pinch = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+          enterRelief();
+          return;
+        }
+        if (touches.size > 2) return;
+      }
+      const orbit = e.button === 2 || e.button === 1 || e.shiftKey;
+      if (orbit) {
+        enterRelief();
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), color: [0, 0, 0], uv: null, orbit });
+        return;
+      }
       const color = stirColor();
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), color });
+      const uv = pick(e.clientX, e.clientY);
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), color, uv, orbit: false });
+      if (!uv) return;
       // A touch alone leaves a two-inch bloom, even without dragging.
       const sigma = STIR_REACH / 1.4 / L.h;
-      engine.splat(e.clientX / L.w, 1 - e.clientY / L.h, 0, 0, [color[0] * 0.7, color[1] * 0.7, color[2] * 0.7], sigma);
+      engine.splat(uv.x, uv.y, 0, 0, [color[0] * 0.7, color[1] * 0.7, color[2] * 0.7], sigma);
     };
     const onMove = (e: PointerEvent) => {
+      if (e.pointerType === "touch" && touches.has(e.pointerId)) {
+        const before = touches.get(e.pointerId)!;
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size === 2) {
+          const [p1, p2] = [...touches.values()];
+          const span = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+          if (pinch > 0 && span > 0) goal.dist = clampDist(goal.dist * (pinch / span));
+          pinch = span;
+          goal.yaw -= ((e.clientX - before.x) / 2) * 0.006;
+          goal.pitch = clampPitch(goal.pitch + ((e.clientY - before.y) / 2) * 0.005);
+          lastTouchCam = clock;
+          return;
+        }
+      }
       const prev = pointers.get(e.pointerId);
       if (!prev) return;
       const now = performance.now();
       const dt = Math.max(0.008, (now - prev.t) / 1000);
       const dx = e.clientX - prev.x;
       const dy = e.clientY - prev.y;
+      if (prev.orbit) {
+        goal.yaw -= dx * 0.006;
+        goal.pitch = clampPitch(goal.pitch + dy * 0.005);
+        lastTouchCam = clock;
+        pointers.set(e.pointerId, { ...prev, x: e.clientX, y: e.clientY, t: now });
+        return;
+      }
       if (Math.hypot(dx, dy) < 1.5) return;
-      const sigma = STIR_REACH / 1.4 / L.h;
-      const k = 0.9;
-      // Ink follows distance dragged, not event rate, so a long stir paints
-      // a ribbon instead of flooding the field.
-      const ink = 0.3 * Math.min(1, Math.hypot(dx, dy) / (STIR_REACH * 0.35));
-      engine.splat(
-        e.clientX / L.w,
-        1 - e.clientY / L.h,
-        (dx / L.w / dt) * k,
-        (-dy / L.h / dt) * k,
-        [prev.color[0] * ink, prev.color[1] * ink, prev.color[2] * ink],
-        sigma,
-      );
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now, color: prev.color });
+      const uv = pick(e.clientX, e.clientY);
+      if (uv && prev.uv) {
+        const sigma = STIR_REACH / 1.4 / L.h;
+        const k = 0.9;
+        const du = uv.x - prev.uv.x;
+        const dv = uv.y - prev.uv.y;
+        // Ink follows distance dragged, not event rate, so a long stir paints
+        // a ribbon instead of flooding the field.
+        const ink = 0.3 * Math.min(1, Math.hypot(du * L.w, dv * L.h) / (STIR_REACH * 0.35));
+        engine.splat(uv.x, uv.y, (du / dt) * k, (dv / dt) * k, [prev.color[0] * ink, prev.color[1] * ink, prev.color[2] * ink], sigma);
+      }
+      pointers.set(e.pointerId, { ...prev, x: e.clientX, y: e.clientY, t: now, uv });
     };
     const onUp = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
+      touches.delete(e.pointerId);
+      if (touches.size < 2) pinch = 0;
     };
+    const onWheel = (e: WheelEvent) => {
+      if ((e.target as HTMLElement).closest("[data-chrome]")) return;
+      e.preventDefault();
+      enterRelief();
+      goal.dist = clampDist(goal.dist * Math.exp(e.deltaY * 0.0012));
+      lastTouchCam = clock;
+    };
+    const onDouble = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest("[data-chrome]")) return;
+      if (useCosmos.getState().relief) resetView();
+    };
+    const onContext = (e: Event) => e.preventDefault();
     fluidCanvas.addEventListener("pointerdown", onDown);
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+    fluidCanvas.addEventListener("wheel", onWheel, { passive: false });
+    fluidCanvas.addEventListener("dblclick", onDouble);
+    fluidCanvas.addEventListener("contextmenu", onContext);
 
     // ---- drawing ---------------------------------------------------------
     const drawPaths = (tracks: Track[]) => {
@@ -294,14 +394,25 @@ export function Stage() {
       g.globalAlpha = 1;
     };
 
-    const strokePath = (track: Track, alpha: number, width: number) => {
+    /** Trace a path through the camera; points behind the eye break the line. */
+    const tracePath = (points: number, fn: (i: number) => { x: number; y: number }, lift?: number) => {
       ctx.beginPath();
-      for (let i = 0; i <= 240; i++) {
-        const p = pointOnPath(i / 240, track.path);
-        const s = toScreen(L, p.x, p.y);
-        if (i === 0) ctx.moveTo(s.x, s.y);
+      let pen = false;
+      for (let i = 0; i <= points; i++) {
+        const q = fn(i);
+        const s = at(q.x, q.y, lift);
+        if (s.k <= 0) {
+          pen = false;
+          continue;
+        }
+        if (!pen) ctx.moveTo(s.x, s.y);
         else ctx.lineTo(s.x, s.y);
+        pen = true;
       }
+    };
+
+    const strokePath = (track: Track, alpha: number, width: number) => {
+      tracePath(240, (i) => pointOnPath(i / 240, track.path));
       ctx.strokeStyle = track.color;
       ctx.globalAlpha = alpha;
       ctx.lineWidth = width;
@@ -309,41 +420,66 @@ export function Stage() {
       ctx.globalAlpha = 1;
     };
 
-    const drawOverlay = (tracks: Track[], playing: boolean) => {
+    const circle = (r: number) => tracePath(72, (i) => ({ x: 400 + Math.cos((i / 72) * Math.PI * 2) * r, y: 300 + Math.sin((i / 72) * Math.PI * 2) * r }));
+
+    const drawOverlay = (tracks: Track[]) => {
+      const tilted = mix > 0.001;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, overlay.width, overlay.height);
-      drawPaths(tracks);
-      ctx.drawImage(pathsLayer, 0, 0);
+      if (!tilted) {
+        drawPaths(tracks);
+        ctx.drawImage(pathsLayer, 0, 0);
+      }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.globalCompositeOperation = "lighter";
+      ctx.lineJoin = "round";
+
+      if (tilted) {
+        for (const track of tracks) {
+          if (!track.active) continue;
+          tracePath(360, (i) => pointOnPath(i / 360, track.path));
+          ctx.strokeStyle = track.color;
+          ctx.globalAlpha = 0.06;
+          ctx.lineWidth = 6;
+          ctx.stroke();
+          ctx.globalAlpha = 0.4;
+          ctx.lineWidth = 1.1;
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
 
       tracks.forEach((track, i) => {
         const o = orbs[i];
         if (track.active && o.flash > 0.02) strokePath(track, o.flash * 0.55, 1.6 + o.flash * 1.6);
       });
 
-      const gate = toScreen(L, 400, 300);
+      const gate = at(400, 300);
       const breathe = ear.smoothed * 30;
-      const gr = (12 + breathe) * Math.max(L.s, 0.6);
+      const grScore = (12 + breathe) * (Math.max(L.s, 0.6) / L.s);
       ctx.strokeStyle = `rgba(255, 238, 205, ${0.3 + gateFlash * 0.5})`;
       ctx.lineWidth = 1 + gateFlash * 1.5;
-      ctx.beginPath();
-      ctx.arc(gate.x, gate.y, gr, 0, Math.PI * 2);
+      circle(grScore);
       ctx.stroke();
-      for (let k = 0; k < 4; k++) {
-        const a = (k * Math.PI) / 2 + Math.PI / 4;
-        ctx.beginPath();
-        ctx.moveTo(gate.x + Math.cos(a) * (gr + 4), gate.y + Math.sin(a) * (gr + 4));
-        ctx.lineTo(gate.x + Math.cos(a) * (gr + 10), gate.y + Math.sin(a) * (gr + 10));
-        ctx.stroke();
+      const gr = grScore * L.s * gate.k;
+      if (!tilted) {
+        for (let k = 0; k < 4; k++) {
+          const a = (k * Math.PI) / 2 + Math.PI / 4;
+          ctx.beginPath();
+          ctx.moveTo(gate.x + Math.cos(a) * (gr + 4), gate.y + Math.sin(a) * (gr + 4));
+          ctx.lineTo(gate.x + Math.cos(a) * (gr + 10), gate.y + Math.sin(a) * (gr + 10));
+          ctx.stroke();
+        }
       }
-      const core = ctx.createRadialGradient(gate.x, gate.y, 0, gate.x, gate.y, gr * 2.4);
-      core.addColorStop(0, `rgba(255, 244, 222, ${0.18 + gateFlash * 0.5})`);
-      core.addColorStop(1, "rgba(255, 244, 222, 0)");
-      ctx.fillStyle = core;
-      ctx.beginPath();
-      ctx.arc(gate.x, gate.y, gr * 2.4, 0, Math.PI * 2);
-      ctx.fill();
+      if (gate.k > 0) {
+        const core = ctx.createRadialGradient(gate.x, gate.y, 0, gate.x, gate.y, gr * 2.4);
+        core.addColorStop(0, `rgba(255, 244, 222, ${0.18 + gateFlash * 0.5})`);
+        core.addColorStop(1, "rgba(255, 244, 222, 0)");
+        ctx.fillStyle = core;
+        ctx.beginPath();
+        ctx.arc(gate.x, gate.y, gr * 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       for (const r of rings) {
         const k = Math.min(1, (clock - r.t) / 1.5);
@@ -351,8 +487,7 @@ export function Stage() {
         ctx.strokeStyle = r.color;
         ctx.globalAlpha = (1 - k) * 0.75;
         ctx.lineWidth = 2.2 * (1 - k) + 0.4;
-        ctx.beginPath();
-        ctx.arc(gate.x, gate.y, (16 + ease * 230) * L.s, 0, Math.PI * 2);
+        circle(16 + ease * 230);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
@@ -360,8 +495,9 @@ export function Stage() {
       tracks.forEach((track, i) => {
         if (!track.active) return;
         const o = orbs[i];
-        const s = toScreen(L, o.pos.x, o.pos.y);
-        const scale = Math.max(L.s, 0.55);
+        const s = at(o.pos.x, o.pos.y);
+        if (s.k <= 0) return;
+        const scale = Math.max(L.s, 0.55) * Math.min(3, s.k);
         const glowR = (24 + o.flash * 26) * scale;
         const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glowR);
         g.addColorStop(0, track.color);
@@ -380,14 +516,43 @@ export function Stage() {
       ctx.globalCompositeOperation = "source-over";
       ctx.textAlign = "center";
       ctx.font = "500 13px Outfit, system-ui, sans-serif";
-      for (const lab of labels) {
-        const k = Math.min(1, (clock - lab.t) / 1.4);
-        ctx.globalAlpha = (1 - k) * 0.9;
-        ctx.fillStyle = lab.color;
-        ctx.fillText(lab.text, gate.x, gate.y - (34 + k * 26) * Math.max(L.s, 0.7));
+      if (gate.k > 0) {
+        for (const lab of labels) {
+          const k = Math.min(1, (clock - lab.t) / 1.4);
+          ctx.globalAlpha = (1 - k) * 0.9;
+          ctx.fillStyle = lab.color;
+          ctx.fillText(lab.text, gate.x, gate.y - (34 + k * 26) * Math.max(L.s, 0.7));
+        }
       }
       ctx.globalAlpha = 1;
-      void playing;
+    };
+
+    /** Ease the camera toward its goal and hand the engine this frame's view. */
+    const updateCamera = (dt: number, relief: boolean, playing: boolean) => {
+      const want = relief ? 1 : 0;
+      mix += (want - mix) * Math.min(1, dt * 3.2);
+      if (Math.abs(want - mix) < 0.002) mix = want;
+      // A slow drift of the view while music plays, until the viewer takes the camera.
+      if (relief && playing && clock - lastTouchCam > 8) goal.yaw += dt * 0.035;
+      const gy = relief ? goal.yaw : 0;
+      const gp = relief ? goal.pitch : Math.PI / 2 - 0.001;
+      const gd = relief ? goal.dist : FIT;
+      const e = Math.min(1, dt * 5);
+      cam.yaw += (gy - cam.yaw) * e;
+      cam.pitch += (gp - cam.pitch) * e;
+      cam.dist += (gd - cam.dist) * e;
+      const c = engine.center;
+      const t = uvToWorld(c[0], c[1], engine.aspect);
+      cam.target = [t[0] * mix, 0, t[2] * mix];
+      if (mix <= 0.001) {
+        vp = null;
+        engine.relief = null;
+        if (!relief) cam.yaw = 0;
+        return;
+      }
+      const m = viewProj(cam, L.w / L.h);
+      vp = m.matrix;
+      engine.relief = { viewProj: m.matrix, eye: m.eye, height: RELIEF_HEIGHT * mix };
     };
 
     // ---- the instrument ---------------------------------------------------
@@ -640,8 +805,9 @@ export function Stage() {
       while (labels.length && clock - labels[0].t > 1.5) labels.shift();
       gateFlash = Math.max(0, gateFlash - dt * 2.5);
 
+      updateCamera(dt, state.relief, state.playing);
       engine.step(dt);
-      drawOverlay(state.tracks, state.playing);
+      drawOverlay(state.tracks);
       requestAnimationFrame(loop);
     };
     const raf = requestAnimationFrame(loop);
@@ -673,6 +839,9 @@ export function Stage() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      fluidCanvas.removeEventListener("wheel", onWheel);
+      fluidCanvas.removeEventListener("dblclick", onDouble);
+      fluidCanvas.removeEventListener("contextmenu", onContext);
       engine.destroy();
     };
   }, []);

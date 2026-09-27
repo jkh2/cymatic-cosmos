@@ -26,6 +26,7 @@ export const useCosmos = create<{
   medium: MediumName;
   curl: boolean;
   fade: number;
+  relief: boolean;
   tracks: Track[];
   panelOpen: boolean;
   notice: string | null;
@@ -37,6 +38,7 @@ export const useCosmos = create<{
   toggleMedium: () => void;
   toggleCurl: () => void;
   setFade: (n: number) => void;
+  setRelief: (on: boolean) => void;
   togglePanel: () => void;
   updateTrack: (id: number, patch: Partial<Track>) => void;
   setEnsemble: (mode: "quartet" | "all") => void;
@@ -53,6 +55,7 @@ export const useCosmos = create<{
   medium: "smoke",
   curl: false,
   fade: 0.3,
+  relief: false,
   tracks: createTracks(),
   panelOpen: false,
   notice: null,
@@ -110,6 +113,12 @@ export const useCosmos = create<{
   toggleMedium: () => set((s) => ({ medium: s.medium === "smoke" ? "ink" : "smoke" })),
   toggleCurl: () => set((s) => ({ curl: !s.curl })),
   setFade: (fade) => set({ fade }),
+  setRelief: (relief) => {
+    set({ relief });
+    if (relief) {
+      get().flash("Relief: scroll to zoom, right-drag or Shift-drag to orbit (two fingers on a phone), double-click to reset.");
+    }
+  },
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   updateTrack: (id, patch) =>
     set((s) => ({

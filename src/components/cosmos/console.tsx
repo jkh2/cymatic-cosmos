@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Camera,
   Droplets,
+  Mountain,
   Palette,
+  Square,
   RotateCw,
   Mic,
   MicOff,
@@ -116,6 +118,8 @@ export function Console() {
   const medium = useCosmos((s) => s.medium);
   const curl = useCosmos((s) => s.curl);
   const fade = useCosmos((s) => s.fade);
+  const relief = useCosmos((s) => s.relief);
+  const setRelief = useCosmos((s) => s.setRelief);
   const tracks = useCosmos((s) => s.tracks);
   const panelOpen = useCosmos((s) => s.panelOpen);
   const notice = useCosmos((s) => s.notice);
@@ -222,6 +226,20 @@ export function Console() {
           options={[
             { value: "smoke", text: "Smoke", icon: <Wind size={16} />, hint: "Smoke: rises and clears quickly" },
             { value: "ink", text: "Ink", icon: <Droplets size={16} />, hint: "Ink in water: no rise, lingers and curls" },
+          ]}
+        />
+        <Segmented
+          label="Depth"
+          value={relief ? "relief" : "flat"}
+          onChange={(v) => setRelief(v === "relief")}
+          options={[
+            { value: "flat", text: "Flat", icon: <Square size={16} />, hint: "Flat: looking straight down at the smoke" },
+            {
+              value: "relief",
+              text: "Relief",
+              icon: <Mountain size={16} />,
+              hint: "Relief: bright smoke rises into glowing terrain you can orbit and zoom",
+            },
           ]}
         />
         <Segmented

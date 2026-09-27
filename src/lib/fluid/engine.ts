@@ -170,7 +170,9 @@ export class FluidEngine {
     | "gradient"
     | "clear"
     | "forces"
-    | "display",
+    | "display"
+    | "terrain"
+    | "sky",
     Program
   >;
   private vao: WebGLVertexArrayObject;
@@ -197,6 +199,10 @@ export class FluidEngine {
   private glowMode = new Float32Array(S.MAX_GLOWS * 4);
   private glowColor = new Float32Array(S.MAX_GLOWS * 3);
   private glowSpread = new Float32Array(S.MAX_GLOWS);
+  /** Relief view: when set, the finished image is draped over a lit heightfield. */
+  relief: { viewProj: Float32Array; eye: [number, number, number]; height: number } | null = null;
+  private colorTarget: { texture: WebGLTexture; fbo: WebGLFramebuffer; width: number; height: number } | null = null;
+  private grid: { vao: WebGLVertexArrayObject; count: number; cols: number; rows: number } | null = null;
   destroyed = false;
 
   constructor(canvas: HTMLCanvasElement, params: FluidParams) {
@@ -205,7 +211,7 @@ export class FluidEngine {
     const gl = canvas.getContext("webgl2", {
       alpha: false,
       antialias: false,
-      depth: false,
+      depth: true,
       stencil: false,
       premultipliedAlpha: false,
       preserveDrawingBuffer: true,
@@ -230,6 +236,8 @@ export class FluidEngine {
       clear: makeProgram(gl, S.VERT, S.CLEAR),
       forces: makeProgram(gl, S.VERT, S.FORCES),
       display: makeProgram(gl, S.VERT, S.DISPLAY),
+      terrain: makeProgram(gl, S.TERRAIN_VERT, S.TERRAIN_FRAG),
+      sky: makeProgram(gl, S.VERT, S.SKY),
     };
 
     const vao = gl.createVertexArray();
@@ -276,6 +284,76 @@ export class FluidEngine {
     this.pressure = this.makeDouble(sim.width, sim.height);
     this.divergence = this.makeFBO(sim.width, sim.height);
     this.curl = this.makeFBO(sim.width, sim.height);
+    this.colorTarget = null;
+    this.grid = null;
+  }
+
+  private ensureColorTarget() {
+    const gl = this.gl;
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    if (this.colorTarget && this.colorTarget.width === w && this.colorTarget.height === h) return this.colorTarget;
+    const texture = gl.createTexture();
+    const fbo = gl.createFramebuffer();
+    if (!texture || !fbo) throw new Error("Failed to allocate relief target");
+    const levels = Math.floor(Math.log2(Math.max(w, h))) + 1;
+    // A slot of its own, so it is never bound where the display pass samples.
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    this.colorTarget = { texture, fbo, width: w, height: h };
+    return this.colorTarget;
+  }
+
+  private ensureGrid() {
+    if (this.grid) return this.grid;
+    const gl = this.gl;
+    const rows = { low: 170, medium: 240, high: 300 }[this.params.quality];
+    const cols = Math.min(640, Math.max(8, Math.round(rows * this.aspect)));
+    const verts = new Float32Array((cols + 1) * (rows + 1) * 2);
+    let k = 0;
+    for (let j = 0; j <= rows; j++) {
+      for (let i = 0; i <= cols; i++) {
+        verts[k++] = i / cols;
+        verts[k++] = j / rows;
+      }
+    }
+    const idx = new Uint32Array(cols * rows * 6);
+    k = 0;
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const a = j * (cols + 1) + i;
+        const b = a + 1;
+        const c = a + cols + 1;
+        const d = c + 1;
+        idx[k++] = a;
+        idx[k++] = b;
+        idx[k++] = c;
+        idx[k++] = b;
+        idx[k++] = d;
+        idx[k++] = c;
+      }
+    }
+    const vao = gl.createVertexArray();
+    if (!vao) throw new Error("Failed to create relief mesh");
+    gl.bindVertexArray(vao);
+    const vb = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const ib = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    gl.bindVertexArray(this.vao);
+    this.grid = { vao, count: idx.length, cols, rows };
+    return this.grid;
   }
 
   private makeFBO(width: number, height: number): FBO {
@@ -589,7 +667,58 @@ export class FluidEngine {
     gl.uniform4fv(p.uniforms.uGlowMode, this.glowMode);
     gl.uniform3fv(p.uniforms.uGlowColor, this.glowColor);
     gl.uniform1fv(p.uniforms.uGlowSpread, this.glowSpread);
-    this.blit(null);
+    if (!this.relief) {
+      this.blit(null);
+      return;
+    }
+    this.drawRelief(p);
+  }
+
+  private drawRelief(display: Program) {
+    const gl = this.gl;
+    const relief = this.relief;
+    if (!relief) return;
+    const target = this.ensureColorTarget();
+    const grid = this.ensureGrid();
+
+    // 1. The finished flat image, into a mipmapped texture.
+    gl.useProgram(display.id);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+    gl.viewport(0, 0, target.width, target.height);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, target.texture);
+    gl.generateMipmap(gl.TEXTURE_2D);
+
+    // 2. Stars behind, then the lit sheet in front.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const sky = this.programs.sky;
+    gl.useProgram(sky.id);
+    gl.uniform1f(sky.uniforms.uTime, this.realTime);
+    gl.uniform1f(sky.uniforms.uStarScale, Math.min(window.devicePixelRatio || 1, 1.5));
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    const t = this.programs.terrain;
+    gl.useProgram(t.id);
+    gl.uniform1i(t.uniforms.uColor, 7);
+    gl.uniformMatrix4fv(t.uniforms.uViewProj, false, relief.viewProj);
+    gl.uniform1f(t.uniforms.uAspect, this.aspect);
+    gl.uniform1f(t.uniforms.uHeight, relief.height);
+    // Height reads a blurred level: broad forms and Chladni ridges rise, fine wisps stay as color.
+    gl.uniform1f(t.uniforms.uLod, Math.log2(Math.max(1, target.height / grid.rows)) + 2.0);
+    gl.uniform2f(t.uniforms.uTexel, 1 / grid.cols, 1 / grid.rows);
+    gl.uniform3f(t.uniforms.uEye, relief.eye[0], relief.eye[1], relief.eye[2]);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.bindVertexArray(grid.vao);
+    gl.drawElements(gl.TRIANGLES, grid.count, gl.UNSIGNED_INT, 0);
+    gl.disable(gl.DEPTH_TEST);
+    gl.bindVertexArray(this.vao);
   }
 
   destroy() {
