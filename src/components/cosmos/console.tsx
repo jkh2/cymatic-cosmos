@@ -5,7 +5,6 @@ import {
   Eye,
   Mic,
   MicOff,
-  Move3d,
   Pause,
   Play,
   SlidersHorizontal,
@@ -33,10 +32,10 @@ function Chip({
       aria-label={label}
       aria-pressed={pressed}
       onClick={onClick}
-      className={`inline-flex h-11 items-center gap-2 rounded-full border px-3 text-sm font-medium md:px-4 ${
+      className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-3 text-sm font-medium ${
         pressed
-          ? "border-gold bg-gold text-void"
-          : "border-line bg-panel/80 text-ink hover:border-gold"
+          ? "border-gold/80 bg-gold/90 text-void"
+          : "border-white/10 bg-white/[0.04] text-ink hover:border-gold/60"
       }`}
     >
       {children}
@@ -53,7 +52,7 @@ export function Console() {
   const prayer = useCosmos((s) => s.prayer);
   const medium = useCosmos((s) => s.medium);
   const curl = useCosmos((s) => s.curl);
-  const looking = useCosmos((s) => s.looking);
+  const fade = useCosmos((s) => s.fade);
   const tracks = useCosmos((s) => s.tracks);
   const panelOpen = useCosmos((s) => s.panelOpen);
   const notice = useCosmos((s) => s.notice);
@@ -64,7 +63,7 @@ export function Console() {
   const togglePrayer = useCosmos((s) => s.togglePrayer);
   const toggleMedium = useCosmos((s) => s.toggleMedium);
   const toggleCurl = useCosmos((s) => s.toggleCurl);
-  const toggleLooking = useCosmos((s) => s.toggleLooking);
+  const setFade = useCosmos((s) => s.setFade);
   const togglePanel = useCosmos((s) => s.togglePanel);
   const updateTrack = useCosmos((s) => s.updateTrack);
   const setEnsemble = useCosmos((s) => s.setEnsemble);
@@ -93,92 +92,85 @@ export function Console() {
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      <header
-        data-chrome
-        className="pointer-events-auto absolute inset-x-0 top-0 flex flex-col gap-3 bg-gradient-to-b from-void via-void/85 to-transparent p-4 pb-10 md:p-6 md:pb-12"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="font-display text-2xl font-medium tracking-tight text-ink md:text-3xl">
-              Cymatic <em className="text-gold italic">Cosmos</em>
-            </h1>
-            <p className="text-sm text-mist">James Keith Harwood II</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Chip pressed={playing} label={playing ? "Pause" : "Play"} onClick={() => void togglePlay()}>
-              {playing ? <Pause size={18} /> : <Play size={18} />}
-              <span className="hidden sm:inline">{playing ? "Pause" : "Play"}</span>
-            </Chip>
-            <Chip pressed={mic} label={mic ? "Stop microphone" : "Listen"} onClick={() => void toggleMic()}>
-              {mic ? <MicOff size={18} /> : <Mic size={18} />}
-              <span className="hidden sm:inline">{mic ? "Listening" : "Listen"}</span>
-            </Chip>
-            <Chip pressed={prayer} label="Prayer" onClick={togglePrayer}>
-              <SunMedium size={18} />
-              <span className="hidden sm:inline">Prayer</span>
-            </Chip>
-            <Chip label="Capture" onClick={captureCosmos}>
-              <Camera size={18} />
-              <span className="hidden md:inline">Capture</span>
-            </Chip>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-mist">
-            Tempo
-            <input
-              type="range"
-              min={20}
-              max={200}
-              value={tempo}
-              onChange={(e) => setTempo(Number(e.target.value))}
-              className="w-28 md:w-36"
-            />
-            <span className="w-10 text-ink">{tempo}</span>
-          </label>
-          <label className="flex items-center gap-2 text-sm text-mist">
-            Voice
-            <input
-              type="range"
-              min={0}
-              max={2}
-              step={0.1}
-              value={voice}
-              onChange={(e) => setVoice(Number(e.target.value))}
-              className="w-24 md:w-32"
-            />
-          </label>
-          <Chip pressed={medium === "smoke"} label="Smoke or ink" onClick={toggleMedium}>
-            {medium === "smoke" ? <Wind size={18} /> : <Droplets size={18} />}
-            <span>{medium === "smoke" ? "Smoke" : "Ink"}</span>
-          </Chip>
-          <Chip pressed={curl} label="Curl view" onClick={toggleCurl}>
-            <Eye size={18} />
-            <span className="hidden sm:inline">{curl ? "Curl" : "Dye"}</span>
-          </Chip>
-          <Chip pressed={looking} label="Turn the sphere" onClick={toggleLooking}>
-            <Move3d size={18} />
-            <span className="hidden sm:inline">{looking ? "Turning" : "Stir"}</span>
-          </Chip>
-          <Chip pressed={panelOpen} label="Voices" onClick={togglePanel}>
-            <SlidersHorizontal size={18} />
-            <span>Voices</span>
-          </Chip>
-        </div>
-        <p className="max-w-xl text-sm text-mist">
-          {looking
-            ? "Drag to turn the armillary. Scroll to move closer."
-            : "Drag the dark to stir the smoke. The orbits leave their own trails."}
-          {micError ? ` ${micError}` : ""}
-          {notice ? ` ${notice}` : ""}
-        </p>
+      <header data-chrome className="pointer-events-auto absolute top-0 left-0 p-4 md:p-6">
+        <h1 className="font-display text-2xl font-medium tracking-tight text-ink md:text-3xl">
+          Cymatic <em className="text-gold italic">Cosmos</em>
+        </h1>
+        <p className="text-xs text-mist md:text-sm">James Keith Harwood II</p>
       </header>
+
+      <p
+        className={`absolute inset-x-0 bottom-[8.5rem] px-6 text-center text-xs text-mist transition-opacity duration-1000 sm:bottom-28 lg:bottom-24 ${
+          playing && !micError && !notice ? "opacity-0" : "opacity-80"
+        }`}
+      >
+        {micError ?? notice ?? "Drag anywhere to stir the smoke. Each orb sounds as it crosses the center."}
+      </p>
+
+      <nav
+        data-chrome
+        aria-label="Instrument controls"
+        className="pointer-events-auto absolute inset-x-3 bottom-3 flex flex-wrap items-center justify-center gap-2 rounded-3xl border border-white/10 bg-black/45 p-2 backdrop-blur-md lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 lg:flex-nowrap lg:rounded-full"
+      >
+        <Chip pressed={playing} label={playing ? "Pause" : "Play"} onClick={() => void togglePlay()}>
+          {playing ? <Pause size={18} /> : <Play size={18} />}
+          <span>{playing ? "Pause" : "Play"}</span>
+        </Chip>
+        <label className="flex h-10 shrink-0 items-center gap-2 px-2 text-sm text-mist">
+          Tempo
+          <input
+            type="range"
+            min={20}
+            max={200}
+            value={tempo}
+            onChange={(e) => setTempo(Number(e.target.value))}
+            className="w-20 md:w-28"
+          />
+          <span className="w-7 text-ink tabular-nums">{tempo}</span>
+        </label>
+        <label className="flex h-10 shrink-0 items-center gap-2 px-2 text-sm text-mist" title="How fast the smoke fades">
+          Fade
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={fade}
+            onChange={(e) => setFade(Number(e.target.value))}
+            className="w-16 md:w-24"
+          />
+        </label>
+        <Chip pressed={panelOpen} label="Voices" onClick={togglePanel}>
+          <SlidersHorizontal size={18} />
+          <span>Voices</span>
+        </Chip>
+        <Chip pressed={medium === "ink"} label="Smoke or ink" onClick={toggleMedium}>
+          {medium === "smoke" ? <Wind size={18} /> : <Droplets size={18} />}
+          <span className="hidden sm:inline">{medium === "smoke" ? "Smoke" : "Ink"}</span>
+        </Chip>
+        <Chip pressed={curl} label="Curl view" onClick={toggleCurl}>
+          <Eye size={18} />
+          <span className="hidden sm:inline">{curl ? "Curl" : "Dye"}</span>
+        </Chip>
+        <Chip pressed={mic} label={mic ? "Stop listening" : "Listen"} onClick={() => void toggleMic()}>
+          {mic ? <MicOff size={18} /> : <Mic size={18} />}
+          <span className="hidden sm:inline">{mic ? "Listening" : "Listen"}</span>
+        </Chip>
+        <Chip pressed={prayer} label="Prayer" onClick={togglePrayer}>
+          <SunMedium size={18} />
+          <span className="hidden sm:inline">Prayer</span>
+        </Chip>
+        <Chip label="Capture" onClick={captureCosmos}>
+          <Camera size={18} />
+        </Chip>
+      </nav>
+
       {!playing ? (
         <button
           type="button"
           data-chrome
           onClick={() => void togglePlay()}
-          className="play-flash pointer-events-auto absolute top-[46%] left-1/2 z-20 h-14 -translate-x-1/2 rounded-full border border-gold/70 bg-void/85 px-6 font-display text-xl text-gold"
+          className="play-flash pointer-events-auto absolute top-[calc(50%+4.5rem)] left-1/2 z-20 h-12 -translate-x-1/2 rounded-full border border-gold/60 bg-black/60 px-6 font-display text-lg text-gold backdrop-blur-sm"
         >
           Press play to begin
         </button>
@@ -187,7 +179,7 @@ export function Console() {
       {panelOpen ? (
         <aside
           data-chrome
-          className="pointer-events-auto absolute inset-x-4 bottom-4 z-20 max-h-80 overflow-y-auto rounded-2xl border border-line bg-panel/85 p-4 backdrop-blur-md md:inset-x-auto md:top-36 md:right-4 md:bottom-4 md:w-96 md:max-h-none"
+          className="pointer-events-auto absolute inset-x-3 top-20 bottom-36 z-20 overflow-y-auto rounded-2xl border border-white/10 bg-black/70 p-4 backdrop-blur-md md:inset-x-auto md:top-6 md:right-4 md:bottom-24 md:w-96"
         >
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="font-display text-xl text-ink">Twelve voices</h2>
@@ -200,6 +192,18 @@ export function Console() {
               </button>
             </div>
           </div>
+          <label className="mb-2 flex items-center gap-3 text-sm text-mist">
+            Voice influence
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.1}
+              value={voice}
+              onChange={(e) => setVoice(Number(e.target.value))}
+              className="flex-1"
+            />
+          </label>
           <ul>
             {tracks.map((track) => (
               <li key={track.id} className="grid grid-cols-[2.75rem_1fr] gap-3 border-b border-line py-3">

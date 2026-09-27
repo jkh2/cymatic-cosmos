@@ -4,19 +4,36 @@ export type FluidView = "dye" | "vorticity";
 export type FluidQuality = "low" | "medium" | "high";
 
 export interface FluidParams {
-  viscosity: number;
+  /** Dye fade per second of real time. Higher fades faster. */
   dissipation: number;
+  /** Velocity fade per second of real time. */
   velocityDissipation: number;
   vorticity: number;
   buoyancy: number;
-  splatForce: number;
-  splatRadius: number;
-  idleFlow: number;
-  stretchForce: number;
+  /** Strength of the divergence-free background current. */
+  ambient: number;
+  /** Gentle turn about the score center. */
+  swirl: number;
+  /** tempo / 96 — speeds advection and forces, never dissipation. */
   motion: number;
-  paused: boolean;
+  /** Velocity ceiling in sim texels per second. */
+  maxVelocity: number;
+  exposure: number;
   view: FluidView;
   quality: FluidQuality;
+}
+
+export interface Glow {
+  x: number;
+  y: number;
+  /** Radius in uv-height units. */
+  radius: number;
+  rotation: number;
+  n: number;
+  m: number;
+  sign: number;
+  intensity: number;
+  color: [number, number, number];
 }
 
 interface FBO {
@@ -38,11 +55,24 @@ interface Program {
   uniforms: Record<string, WebGLUniformLocation | null>;
 }
 
+interface PatternJob {
+  x: number;
+  y: number;
+  radius: number;
+  n: number;
+  m: number;
+  rotation: number;
+  amount: number;
+  color: [number, number, number];
+}
+
 const QUALITY: Record<FluidQuality, { sim: number; dye: number; pressure: number }> = {
-  low: { sim: 96, dye: 480, pressure: 12 },
-  medium: { sim: 160, dye: 900, pressure: 20 },
-  high: { sim: 256, dye: 1440, pressure: 28 },
+  low: { sim: 112, dye: 540, pressure: 16 },
+  medium: { sim: 160, dye: 900, pressure: 22 },
+  high: { sim: 224, dye: 1280, pressure: 28 },
 };
+
+const DYE_CAP = 2.0;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string) {
   const sh = gl.createShader(type);
@@ -77,7 +107,8 @@ function makeProgram(gl: WebGL2RenderingContext, vs: string, fs: string): Progra
   for (let i = 0; i < n; i++) {
     const info = gl.getActiveUniform(prog, i);
     if (!info) continue;
-    uniforms[info.name] = gl.getUniformLocation(prog, info.name);
+    const name = info.name.replace(/\[0\]$/, "");
+    uniforms[name] = gl.getUniformLocation(prog, info.name);
   }
   return { id: prog, uniforms };
 }
@@ -88,8 +119,6 @@ function supportFormat(gl: WebGL2RenderingContext, internal: number, format: num
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   gl.texImage2D(gl.TEXTURE_2D, 0, internal, 8, 8, 0, format, type, null);
   const fbo = gl.createFramebuffer();
   if (!fbo) return false;
@@ -102,18 +131,17 @@ function supportFormat(gl: WebGL2RenderingContext, internal: number, format: num
   return ok;
 }
 
+/** Float targets sampled NEAREST with manual bilerp, so mobile GPUs without linear-float filtering still work. */
 function pickFormat(gl: WebGL2RenderingContext) {
   gl.getExtension("EXT_color_buffer_float");
   gl.getExtension("EXT_color_buffer_half_float");
-  gl.getExtension("OES_texture_float_linear");
-  gl.getExtension("OES_texture_half_float_linear");
   if (supportFormat(gl, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT)) {
-    return { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT, filter: gl.NEAREST };
+    return { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT };
   }
   if (supportFormat(gl, gl.RGBA32F, gl.RGBA, gl.FLOAT)) {
-    return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, filter: gl.NEAREST };
+    return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT };
   }
-  return { internal: gl.RGBA, format: gl.RGBA, type: gl.UNSIGNED_BYTE, filter: gl.LINEAR };
+  throw new Error("This GPU cannot render float textures, which the smoke needs.");
 }
 
 function resolution(res: number, width: number, height: number) {
@@ -128,20 +156,20 @@ export class FluidEngine {
   readonly canvas: HTMLCanvasElement;
   private gl: WebGL2RenderingContext;
   private format: ReturnType<typeof pickFormat>;
-  private programs: {
-    splat: Program;
-    vortex: Program;
-    advect: Program;
-    divergence: Program;
-    curl: Program;
-    vorticity: Program;
-    pressure: Program;
-    gradient: Program;
-    diffuse: Program;
-    clear: Program;
-    forces: Program;
-    display: Program;
-  };
+  private programs: Record<
+    | "multisplat"
+    | "pattern"
+    | "advect"
+    | "divergence"
+    | "curl"
+    | "vorticity"
+    | "pressure"
+    | "gradient"
+    | "clear"
+    | "forces"
+    | "display",
+    Program
+  >;
   private vao: WebGLVertexArrayObject;
   private dye!: DoubleFBO;
   private velocity!: DoubleFBO;
@@ -152,7 +180,19 @@ export class FluidEngine {
   private lastQuality: FluidQuality;
   private lastW = 0;
   private lastH = 0;
-  private needsSeed = true;
+  private time = 0;
+  private realTime = 0;
+  /** Score center in uv, used for swirl and vignette. */
+  center: [number, number] = [0.5, 0.5];
+  private splatP = new Float32Array(S.MAX_SPLATS * 4);
+  private splatVel = new Float32Array(S.MAX_SPLATS * 4);
+  private splatDye = new Float32Array(S.MAX_SPLATS * 4);
+  private splatCount = 0;
+  private patterns: PatternJob[] = [];
+  private glows: Glow[] = [];
+  private glowPos = new Float32Array(S.MAX_GLOWS * 4);
+  private glowMode = new Float32Array(S.MAX_GLOWS * 4);
+  private glowColor = new Float32Array(S.MAX_GLOWS * 3);
   destroyed = false;
 
   constructor(canvas: HTMLCanvasElement, params: FluidParams) {
@@ -167,7 +207,7 @@ export class FluidEngine {
       preserveDrawingBuffer: true,
       powerPreference: "high-performance",
     });
-    if (!gl) throw new Error("WebGL2 is required for the fluid solver.");
+    if (!gl) throw new Error("WebGL2 is required for the smoke field.");
     this.gl = gl;
     this.format = pickFormat(gl);
     gl.disable(gl.DEPTH_TEST);
@@ -175,15 +215,14 @@ export class FluidEngine {
     gl.disable(gl.CULL_FACE);
 
     this.programs = {
-      splat: makeProgram(gl, S.VERT, S.SPLAT),
-      vortex: makeProgram(gl, S.VERT, S.VORTEX),
+      multisplat: makeProgram(gl, S.VERT, S.MULTISPLAT),
+      pattern: makeProgram(gl, S.VERT, S.PATTERN),
       advect: makeProgram(gl, S.VERT, S.ADVECT),
       divergence: makeProgram(gl, S.VERT, S.DIVERGENCE),
       curl: makeProgram(gl, S.VERT, S.CURL),
       vorticity: makeProgram(gl, S.VERT, S.VORTICITY),
       pressure: makeProgram(gl, S.VERT, S.PRESSURE),
       gradient: makeProgram(gl, S.VERT, S.GRADIENT),
-      diffuse: makeProgram(gl, S.VERT, S.DIFFUSE),
       clear: makeProgram(gl, S.VERT, S.CLEAR),
       forces: makeProgram(gl, S.VERT, S.FORCES),
       display: makeProgram(gl, S.VERT, S.DISPLAY),
@@ -201,29 +240,26 @@ export class FluidEngine {
 
     this.lastQuality = params.quality;
     this.resize(true);
-    if (this.lastW > 2) {
-      this.seed();
-      this.draw();
-    }
+  }
+
+  get aspect() {
+    return this.canvas.width / Math.max(this.canvas.height, 1);
   }
 
   setParams(next: Partial<FluidParams>) {
-    const qualityChanged = next.quality && next.quality !== this.lastQuality;
     Object.assign(this.params, next);
-    if (qualityChanged && next.quality) {
+    if (next.quality && next.quality !== this.lastQuality) {
       this.lastQuality = next.quality;
       this.resize(true);
     }
   }
 
   resize(force = false) {
-    const gl = this.gl;
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    if (this.canvas.clientWidth < 4 || this.canvas.clientHeight < 4) return;
     const w = Math.max(2, Math.round(this.canvas.clientWidth * dpr));
     const h = Math.max(2, Math.round(this.canvas.clientHeight * dpr));
-    if (this.canvas.clientWidth < 4 || this.canvas.clientHeight < 4) return;
     if (!force && w === this.lastW && h === this.lastH) return;
-    const first = this.lastW === 0;
     this.canvas.width = w;
     this.canvas.height = h;
     this.lastW = w;
@@ -236,19 +272,17 @@ export class FluidEngine {
     this.pressure = this.makeDouble(sim.width, sim.height);
     this.divergence = this.makeFBO(sim.width, sim.height);
     this.curl = this.makeFBO(sim.width, sim.height);
-    gl.viewport(0, 0, w, h);
-    if (first || force) this.needsSeed = true;
   }
 
   private makeFBO(width: number, height: number): FBO {
     const gl = this.gl;
-    const { internal, format, type, filter } = this.format;
+    const { internal, format, type } = this.format;
     const texture = gl.createTexture();
     const fbo = gl.createFramebuffer();
     if (!texture || !fbo) throw new Error("Failed to allocate field buffer");
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, internal, width, height, 0, format, type, null);
@@ -296,83 +330,47 @@ export class FluidEngine {
     gl.bindTexture(gl.TEXTURE_2D, texture);
   }
 
+  /**
+   * Queue a splat for the next step.
+   * x, y in uv. vx, vy in uv per second (added to the flow).
+   * sigma is the gaussian width in uv-height units. dye is added color.
+   */
   splat(
     x: number,
     y: number,
-    dx: number,
-    dy: number,
-    color: [number, number, number],
-    dyeScale = 1,
+    vx: number,
+    vy: number,
+    dye: [number, number, number],
+    sigma: number,
   ) {
-    if (this.destroyed || !this.dye) return;
-    const gl = this.gl;
-    const aspect = this.canvas.width / Math.max(this.canvas.height, 1);
-    const radius = this.params.splatRadius * 0.25;
-    const force = this.params.splatForce;
-    const sp = this.programs.splat;
-    gl.useProgram(sp.id);
-    this.bind(0, this.velocity.read.texture);
-    gl.uniform1i(sp.uniforms.uTarget, 0);
-    gl.uniform2f(sp.uniforms.uPoint, x, y);
-    gl.uniform3f(sp.uniforms.uColor, dx * force, dy * force, 0);
-    gl.uniform1f(sp.uniforms.uRadius, radius);
-    gl.uniform1f(sp.uniforms.uAspect, aspect);
-    this.blit(this.velocity.write);
-    this.velocity.swap();
-
-    this.bind(0, this.dye.read.texture);
-    gl.uniform1i(sp.uniforms.uTarget, 0);
-    gl.uniform3f(sp.uniforms.uColor, color[0] * dyeScale, color[1] * dyeScale, color[2] * dyeScale);
-    gl.uniform1f(sp.uniforms.uRadius, radius * 0.85);
-    this.blit(this.dye.write);
-    this.dye.swap();
+    if (this.splatCount >= S.MAX_SPLATS || !this.velocity) return;
+    const i = this.splatCount++;
+    const sim = this.velocity.read;
+    this.splatP[i * 4] = x;
+    this.splatP[i * 4 + 1] = y;
+    this.splatP[i * 4 + 2] = 1 / Math.max(sigma * sigma, 1e-7);
+    this.splatVel[i * 4] = vx * sim.width;
+    this.splatVel[i * 4 + 1] = vy * sim.height;
+    this.splatDye[i * 4] = dye[0];
+    this.splatDye[i * 4 + 1] = dye[1];
+    this.splatDye[i * 4 + 2] = dye[2];
   }
 
-  vortex(x: number, y: number, strength: number, radius: number) {
-    if (this.destroyed || !this.velocity) return;
-    const gl = this.gl;
-    const aspect = this.canvas.width / Math.max(this.canvas.height, 1);
-    const p = this.programs.vortex;
-    gl.useProgram(p.id);
-    this.bind(0, this.velocity.read.texture);
-    gl.uniform1i(p.uniforms.uTarget, 0);
-    gl.uniform2f(p.uniforms.uPoint, x, y);
-    gl.uniform1f(p.uniforms.uStrength, strength);
-    gl.uniform1f(p.uniforms.uRadius, radius);
-    gl.uniform1f(p.uniforms.uAspect, aspect);
-    this.blit(this.velocity.write);
-    this.velocity.swap();
+  get splatRoom() {
+    return S.MAX_SPLATS - this.splatCount;
   }
 
-  seed() {
-    this.clearFields();
-    const prevRadius = this.params.splatRadius;
-    const prevForce = this.params.splatForce;
-    this.params.splatRadius = 0.26;
-    this.params.splatForce = 2800;
-    const blobs: Array<{
-      x: number;
-      y: number;
-      color: [number, number, number];
-      spin: number;
-      dx: number;
-      dy: number;
-    }> = [
-      { x: 0.28, y: 0.42, color: [0.12, 0.72, 0.78], spin: 22, dx: 0.06, dy: 0.02 },
-      { x: 0.72, y: 0.58, color: [0.9, 0.42, 0.1], spin: -18, dx: -0.05, dy: 0.02 },
-      { x: 0.48, y: 0.7, color: [0.85, 0.7, 0.28], spin: 12, dx: 0.01, dy: 0.04 },
-    ];
-    for (const b of blobs) {
-      this.splat(b.x, b.y, b.dx, b.dy, b.color);
-      this.vortex(b.x, b.y, b.spin, 0.11);
-    }
-    this.params.splatRadius = prevRadius;
-    this.params.splatForce = prevForce;
-    this.needsSeed = false;
+  pattern(job: PatternJob) {
+    if (this.patterns.length < 6) this.patterns.push(job);
   }
 
-  private clearFields() {
+  setGlows(glows: Glow[]) {
+    this.glows = glows;
+  }
+
+  clear() {
     const gl = this.gl;
+    if (!this.dye) return;
     for (const fbo of [
       this.dye.read,
       this.dye.write,
@@ -390,23 +388,71 @@ export class FluidEngine {
     }
   }
 
+  private flushSplats() {
+    const n = this.splatCount;
+    if (!n) return;
+    const gl = this.gl;
+    const p = this.programs.multisplat;
+    gl.useProgram(p.id);
+    gl.uniform1i(p.uniforms.uCount, n);
+    gl.uniform4fv(p.uniforms.uP, this.splatP);
+    gl.uniform1f(p.uniforms.uAspect, this.aspect);
+    gl.uniform1f(p.uniforms.uCap, DYE_CAP);
+    gl.uniform1f(p.uniforms.uMaxVel, this.params.maxVelocity);
+
+    this.bind(0, this.velocity.read.texture);
+    gl.uniform1i(p.uniforms.uTarget, 0);
+    gl.uniform1f(p.uniforms.uDye, 0);
+    gl.uniform4fv(p.uniforms.uV, this.splatVel);
+    this.blit(this.velocity.write);
+    this.velocity.swap();
+
+    this.bind(0, this.dye.read.texture);
+    gl.uniform1f(p.uniforms.uDye, 1);
+    gl.uniform4fv(p.uniforms.uV, this.splatDye);
+    this.blit(this.dye.write);
+    this.dye.swap();
+
+    this.splatCount = 0;
+  }
+
+  private flushPatterns() {
+    if (!this.patterns.length) return;
+    const gl = this.gl;
+    const p = this.programs.pattern;
+    gl.useProgram(p.id);
+    gl.uniform1f(p.uniforms.uAspect, this.aspect);
+    gl.uniform1f(p.uniforms.uCap, DYE_CAP);
+    for (const job of this.patterns) {
+      this.bind(0, this.dye.read.texture);
+      gl.uniform1i(p.uniforms.uTarget, 0);
+      gl.uniform2f(p.uniforms.uPoint, job.x, job.y);
+      gl.uniform1f(p.uniforms.uRadius, job.radius);
+      gl.uniform4f(p.uniforms.uMode, job.n, job.m, job.rotation, job.amount);
+      gl.uniform3f(p.uniforms.uColor, job.color[0], job.color[1], job.color[2]);
+      this.blit(this.dye.write);
+      this.dye.swap();
+    }
+    this.patterns.length = 0;
+  }
+
   step(dt: number) {
     if (this.destroyed) return;
     this.resize();
     if (!this.dye) return;
-    if (this.needsSeed && this.lastW > 2) this.seed();
-    if (this.params.paused) {
-      this.draw();
-      return;
-    }
     const gl = this.gl;
     const t = Math.min(Math.max(dt, 0.001), 0.033);
-    const flow = t * Math.min(2.4, Math.max(0.2, this.params.motion || 1));
+    const flow = t * Math.min(2.4, Math.max(0.25, this.params.motion || 1));
+    this.time += flow;
+    this.realTime += t;
     const vel = this.velocity;
     const dye = this.dye;
     const texel = vel.read.texel;
     const q = QUALITY[this.params.quality];
-    const aspect = this.canvas.width / Math.max(this.canvas.height, 1);
+    const maxV = this.params.maxVelocity;
+
+    this.flushSplats();
+    this.flushPatterns();
 
     const forces = this.programs.forces;
     gl.useProgram(forces.id);
@@ -415,30 +461,16 @@ export class FluidEngine {
     gl.uniform1i(forces.uniforms.uVelocity, 0);
     gl.uniform1i(forces.uniforms.uDye, 1);
     gl.uniform1f(forces.uniforms.uDt, flow);
+    gl.uniform1f(forces.uniforms.uTime, this.time);
+    gl.uniform1f(forces.uniforms.uAmbient, this.params.ambient);
+    gl.uniform1f(forces.uniforms.uSwirl, this.params.swirl);
     gl.uniform1f(forces.uniforms.uBuoyancy, this.params.buoyancy);
-    gl.uniform1f(forces.uniforms.uIdle, this.params.idleFlow);
-    gl.uniform1f(forces.uniforms.uStretch, this.params.stretchForce);
-    gl.uniform1f(forces.uniforms.uAspect, aspect);
+    gl.uniform1f(forces.uniforms.uAspect, this.aspect);
+    gl.uniform2f(forces.uniforms.uCenter, this.center[0], this.center[1]);
+    gl.uniform1f(forces.uniforms.uMaxVel, maxV);
+    gl.uniform2f(forces.uniforms.uTexel, texel[0], texel[1]);
     this.blit(vel.write);
     vel.swap();
-
-    if (this.params.viscosity > 0.01) {
-      const nu = 0.00001 + this.params.viscosity * 0.08;
-      const alpha = 1 / (nu * t);
-      const beta = 4 + alpha;
-      const iters = Math.max(4, Math.round(this.params.viscosity * 20));
-      const diff = this.programs.diffuse;
-      gl.useProgram(diff.id);
-      gl.uniform2f(diff.uniforms.uTexel, texel[0], texel[1]);
-      gl.uniform1f(diff.uniforms.uAlpha, alpha);
-      gl.uniform1f(diff.uniforms.uBeta, beta);
-      for (let i = 0; i < iters; i++) {
-        this.bind(0, vel.read.texture);
-        gl.uniform1i(diff.uniforms.uTexture, 0);
-        this.blit(vel.write);
-        vel.swap();
-      }
-    }
 
     const curlP = this.programs.curl;
     gl.useProgram(curlP.id);
@@ -456,6 +488,7 @@ export class FluidEngine {
     gl.uniform2f(vort.uniforms.uTexel, texel[0], texel[1]);
     gl.uniform1f(vort.uniforms.uCurlStrength, this.params.vorticity);
     gl.uniform1f(vort.uniforms.uDt, flow);
+    gl.uniform1f(vort.uniforms.uMaxVel, maxV);
     this.blit(vel.write);
     vel.swap();
 
@@ -493,6 +526,7 @@ export class FluidEngine {
     gl.uniform1i(grad.uniforms.uPressure, 0);
     gl.uniform1i(grad.uniforms.uVelocity, 1);
     gl.uniform2f(grad.uniforms.uTexel, texel[0], texel[1]);
+    gl.uniform1f(grad.uniforms.uMaxVel, maxV);
     this.blit(vel.write);
     vel.swap();
 
@@ -505,17 +539,15 @@ export class FluidEngine {
     gl.uniform2f(adv.uniforms.uTexel, texel[0], texel[1]);
     gl.uniform2f(adv.uniforms.uVelTexel, texel[0], texel[1]);
     gl.uniform1f(adv.uniforms.uDt, flow);
-    gl.uniform1f(adv.uniforms.uDissipation, 1 - this.params.velocityDissipation * t);
+    gl.uniform1f(adv.uniforms.uDissipation, Math.exp(-this.params.velocityDissipation * t));
     this.blit(vel.write);
     vel.swap();
 
     this.bind(0, vel.read.texture);
     this.bind(1, dye.read.texture);
-    gl.uniform1i(adv.uniforms.uVelocity, 0);
-    gl.uniform1i(adv.uniforms.uSource, 1);
     gl.uniform2f(adv.uniforms.uTexel, dye.read.texel[0], dye.read.texel[1]);
     gl.uniform2f(adv.uniforms.uVelTexel, texel[0], texel[1]);
-    gl.uniform1f(adv.uniforms.uDissipation, 1 - this.params.dissipation * t);
+    gl.uniform1f(adv.uniforms.uDissipation, Math.exp(-this.params.dissipation * t));
     this.blit(dye.write);
     dye.swap();
 
@@ -524,20 +556,31 @@ export class FluidEngine {
 
   draw() {
     const gl = this.gl;
-    const mode = this.params.view === "dye" ? 0 : 2;
     const p = this.programs.display;
     gl.useProgram(p.id);
     this.bind(0, this.dye.read.texture);
-    this.bind(1, this.velocity.read.texture);
     this.bind(2, this.curl.texture);
-    this.bind(3, this.pressure.read.texture);
     gl.uniform1i(p.uniforms.uDye, 0);
-    gl.uniform1i(p.uniforms.uVelocity, 1);
     gl.uniform1i(p.uniforms.uCurl, 2);
-    gl.uniform1i(p.uniforms.uPressure, 3);
-    gl.uniform1f(p.uniforms.uMode, mode);
+    gl.uniform1f(p.uniforms.uMode, this.params.view === "dye" ? 0 : 1);
     gl.uniform2f(p.uniforms.uTexel, this.velocity.read.texel[0], this.velocity.read.texel[1]);
     gl.uniform2f(p.uniforms.uDyeTexel, this.dye.read.texel[0], this.dye.read.texel[1]);
+    gl.uniform1f(p.uniforms.uExposure, this.params.exposure);
+    gl.uniform1f(p.uniforms.uAspect, this.aspect);
+    gl.uniform1f(p.uniforms.uTime, this.realTime);
+    gl.uniform1f(p.uniforms.uStarScale, Math.min(window.devicePixelRatio || 1, 1.5));
+    gl.uniform2f(p.uniforms.uCenter, this.center[0], this.center[1]);
+    this.glowPos.fill(0);
+    this.glowMode.fill(0);
+    this.glowColor.fill(0);
+    this.glows.slice(0, S.MAX_GLOWS).forEach((g, i) => {
+      this.glowPos.set([g.x, g.y, Math.max(g.radius, 1e-4), g.rotation], i * 4);
+      this.glowMode.set([g.n, g.m, g.sign, g.intensity], i * 4);
+      this.glowColor.set(g.color, i * 3);
+    });
+    gl.uniform4fv(p.uniforms.uGlowPos, this.glowPos);
+    gl.uniform4fv(p.uniforms.uGlowMode, this.glowMode);
+    gl.uniform3fv(p.uniforms.uGlowColor, this.glowColor);
     this.blit(null);
   }
 

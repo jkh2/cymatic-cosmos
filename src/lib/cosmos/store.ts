@@ -25,7 +25,7 @@ export const useCosmos = create<{
   prayer: boolean;
   medium: MediumName;
   curl: boolean;
-  looking: boolean;
+  fade: number;
   tracks: Track[];
   panelOpen: boolean;
   notice: string | null;
@@ -36,7 +36,7 @@ export const useCosmos = create<{
   togglePrayer: () => void;
   toggleMedium: () => void;
   toggleCurl: () => void;
-  toggleLooking: () => void;
+  setFade: (n: number) => void;
   togglePanel: () => void;
   updateTrack: (id: number, patch: Partial<Track>) => void;
   setEnsemble: (mode: "quartet" | "all") => void;
@@ -52,7 +52,7 @@ export const useCosmos = create<{
   prayer: false,
   medium: "smoke",
   curl: false,
-  looking: false,
+  fade: 0.45,
   tracks: createTracks(),
   panelOpen: false,
   notice: null,
@@ -108,7 +108,7 @@ export const useCosmos = create<{
   },
   toggleMedium: () => set((s) => ({ medium: s.medium === "smoke" ? "ink" : "smoke" })),
   toggleCurl: () => set((s) => ({ curl: !s.curl })),
-  toggleLooking: () => set((s) => ({ looking: !s.looking })),
+  setFade: (fade) => set({ fade }),
   togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   updateTrack: (id, patch) =>
     set((s) => ({

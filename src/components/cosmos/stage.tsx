@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
 import { ear, listenForPrayer, sampleEar, triggerNote } from "@/lib/cosmos/audio";
-import { pointOnPath } from "@/lib/cosmos/model";
+import { noteToMidi, pointOnPath, type Track } from "@/lib/cosmos/model";
 import { useCosmos } from "@/lib/cosmos/store";
-import { FluidEngine, type FluidParams } from "@/lib/fluid/engine";
+import { FluidEngine, type FluidParams, type Glow } from "@/lib/fluid/engine";
 
-const SPAN = 4.8;
+type RGB = [number, number, number];
 
 let grab: (() => void) | null = null;
 
@@ -13,99 +12,20 @@ export function captureCosmos() {
   grab?.();
 }
 
-function place(x: number, y: number, index: number, target: THREE.Vector3) {
-  const elev = (index - 5.5) * 0.1;
-  const spin = index * 0.46;
-  const y1 = y * Math.cos(elev);
-  const z1 = y * Math.sin(elev);
-  const cs = Math.cos(spin);
-  const sn = Math.sin(spin);
-  return target.set(x * cs + z1 * sn, y1, -x * sn + z1 * cs);
-}
+/** One CSS inch. The stir brush reaches about two of them. */
+const CSS_INCH = 96;
+const STIR_REACH = 2 * CSS_INCH;
 
-class OrbitCurve extends THREE.Curve<THREE.Vector3> {
-  constructor(
-    private pathIndex: number,
-    private trackIndex: number,
-  ) {
-    super();
-  }
-  override getPoint(t: number, optionalTarget = new THREE.Vector3()) {
-    const p = pointOnPath(t, this.pathIndex);
-    const x = ((p.x - 400) / 300) * SPAN;
-    const y = ((p.y - 300) / 150) * SPAN * 0.5;
-    return place(x, y, this.trackIndex, optionalTarget);
-  }
-}
+/** Center-gate hit radius and re-arm distance, in score pixels. */
+const HIT_RADIUS = 14;
+const REARM = 96;
 
-function hexRgb(hex: string): [number, number, number] {
+function hexRgb(hex: string): RGB {
   const n = Number.parseInt(hex.replace("#", ""), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
-function glowTexture() {
-  const c = document.createElement("canvas");
-  c.width = 128;
-  c.height = 128;
-  const g = c.getContext("2d");
-  if (!g) return new THREE.CanvasTexture(c);
-  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grd.addColorStop(0, "rgba(255,255,255,1)");
-  grd.addColorStop(0.22, "rgba(255,255,255,0.55)");
-  grd.addColorStop(0.55, "rgba(255,255,255,0.08)");
-  grd.addColorStop(1, "rgba(255,255,255,0)");
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
-function toUV(canvas: HTMLCanvasElement, clientX: number, clientY: number) {
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: (clientX - rect.left) / Math.max(rect.width, 1),
-    y: 1 - (clientY - rect.top) / Math.max(rect.height, 1),
-  };
-}
-
-function fluidParams(medium: "smoke" | "ink", prayer: boolean, width: number): FluidParams {
-  const quality = width < 760 ? "low" : "medium";
-  if (medium === "ink") {
-    return {
-      viscosity: 0,
-      dissipation: prayer ? 0.03 : 0.05,
-      velocityDissipation: 0.09,
-      vorticity: 16,
-      buoyancy: 0,
-      splatForce: 3400,
-      splatRadius: 0.34,
-      idleFlow: 0.05,
-      stretchForce: 0,
-      motion: 1,
-      paused: false,
-      view: "dye",
-      quality,
-    };
-  }
-  return {
-    viscosity: 0,
-    dissipation: prayer ? 0.18 : 0.28,
-    velocityDissipation: 0.18,
-    vorticity: 6,
-    buoyancy: prayer ? 0.4 : 1.2,
-    splatForce: 1800,
-    splatRadius: 0.32,
-    idleFlow: 1.5,
-    stretchForce: 0,
-    motion: 1,
-    paused: false,
-    view: "dye",
-    quality,
-  };
-}
-
-function closestOnSegment(x0: number, y0: number, x1: number, y1: number) {
+function closestToCenter(x0: number, y0: number, x1: number, y1: number) {
   const dx = x1 - x0;
   const dy = y1 - y0;
   const len2 = dx * dx + dy * dy;
@@ -114,274 +34,554 @@ function closestOnSegment(x0: number, y0: number, x1: number, y1: number) {
   return Math.hypot(x0 + dx * t - 400, y0 + dy * t - 300);
 }
 
+/** Chladni mode for a note: pitch class picks the figure, octave adds a ring. */
+const MODES: Array<[number, number]> = [
+  [1, 3], [2, 3], [1, 4], [2, 5], [3, 4], [1, 5], [3, 5], [2, 7], [4, 5], [3, 7], [1, 6], [4, 7],
+];
+function modeFor(note: string) {
+  const midi = noteToMidi(note);
+  const [a, b] = MODES[((midi % 12) + 12) % 12];
+  const lift = Math.max(0, Math.min(2, Math.floor(midi / 12) - 4));
+  return { n: a + lift, m: b + lift, sign: midi % 2 === 0 ? 1 : -1 };
+}
+
+/**
+ * Where the 800×600 score sits on screen. Landscape keeps the original
+ * orientation; a tall phone turns the score upright so it fills the glass.
+ */
+function layoutFor(w: number, h: number) {
+  const portrait = h > w * 1.15;
+  const topPad = portrait ? 96 : 104;
+  const bottomPad = portrait ? 150 : 96;
+  const availH = Math.max(120, h - topPad - bottomPad);
+  const s = portrait ? Math.min((w - 24) / 640, availH / 820) : Math.min((w - 48) / 820, availH / 620);
+  const cx = w / 2;
+  const cy = topPad + availH / 2;
+  return { w, h, s, cx, cy, portrait };
+}
+type Layout = ReturnType<typeof layoutFor>;
+
+function toScreen(L: Layout, x: number, y: number) {
+  if (L.portrait) return { x: L.cx + (y - 300) * L.s, y: L.cy + (x - 400) * L.s };
+  return { x: L.cx + (x - 400) * L.s, y: L.cy + (y - 300) * L.s };
+}
+
+function fluidParams(medium: "smoke" | "ink", prayer: boolean, fade: number, width: number): FluidParams {
+  const quality = width < 760 ? "low" : "medium";
+  if (medium === "ink") {
+    return {
+      dissipation: 0.1 + fade * 0.9,
+      velocityDissipation: 0.35,
+      vorticity: 14,
+      buoyancy: 0,
+      ambient: 7,
+      swirl: 10,
+      motion: 1,
+      maxVelocity: 150,
+      exposure: 0.95,
+      view: "dye",
+      quality,
+    };
+  }
+  return {
+    dissipation: 0.25 + fade * 1.6,
+    velocityDissipation: prayer ? 0.55 : 0.7,
+    vorticity: prayer ? 5 : 7,
+    buoyancy: prayer ? 3 : 7,
+    ambient: prayer ? 7 : 10,
+    swirl: prayer ? 16 : 10,
+    motion: 1,
+    maxVelocity: 150,
+    exposure: 0.9,
+    view: "dye",
+    quality,
+  };
+}
+
+interface OrbState {
+  sig: string;
+  prev: { x: number; y: number } | null;
+  prevScreen: { x: number; y: number } | null;
+  armed: boolean;
+  flash: number;
+  pos: { x: number; y: number };
+}
+
+interface Ring {
+  t: number;
+  color: string;
+}
+
+interface Label {
+  t: number;
+  text: string;
+  color: string;
+}
+
+interface Imprint {
+  t: number;
+  glow: Omit<Glow, "x" | "y" | "radius" | "intensity">;
+}
+
 export function Stage() {
   const fluidRef = useRef<HTMLCanvasElement>(null);
-  const threeRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     const fluidCanvas = fluidRef.current;
-    const threeCanvas = threeRef.current;
-    if (!fluidCanvas || !threeCanvas) return;
+    const overlay = overlayRef.current;
+    if (!fluidCanvas || !overlay) return;
+    const ctx = overlay.getContext("2d");
+    if (!ctx) return;
 
     let engine: FluidEngine;
     try {
-      engine = new FluidEngine(fluidCanvas, fluidParams("smoke", false, fluidCanvas.clientWidth || 1200));
+      const s0 = useCosmos.getState();
+      engine = new FluidEngine(fluidCanvas, fluidParams(s0.medium, s0.prayer, s0.fade, fluidCanvas.clientWidth || 1200));
     } catch (err) {
       setFailed(err instanceof Error ? err.message : "The smoke field could not start.");
       return;
     }
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas: threeCanvas,
-      alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: true,
-      powerPreference: "high-performance",
-    });
-    renderer.setClearColor(0x000000, 0);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.NoToneMapping;
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 80);
-    const scratch = new THREE.Vector3();
-    const ndc = new THREE.Vector3();
-    const tex = glowTexture();
-
-    const ringGeo = new THREE.TorusGeometry(SPAN, 0.012, 8, 160);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: 0xd4b06a,
-      transparent: true,
-      opacity: 0.28,
-      toneMapped: false,
-    });
-    for (const tilt of [0, Math.PI / 3, -Math.PI / 5]) {
-      const ring = new THREE.Mesh(ringGeo, ringMat);
-      ring.rotation.x = Math.PI / 2;
-      ring.rotation.y = tilt;
-      scene.add(ring);
-    }
-
-    const orbits = new THREE.Group();
-    scene.add(orbits);
-    let orbitSig = "";
-    const orbitTrash: Array<THREE.BufferGeometry | THREE.Material> = [];
-
-    const orbs = Array.from({ length: 12 }, () => {
-      const mesh = new THREE.Mesh(
-        new THREE.SphereGeometry(0.11, 18, 14),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
-      );
-      const halo = new THREE.Sprite(
-        new THREE.SpriteMaterial({
-          map: tex,
-          color: 0xffffff,
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-          toneMapped: false,
-        }),
-      );
-      halo.scale.set(0.85, 0.85, 1);
-      mesh.add(halo);
-      scene.add(mesh);
-      return { mesh, halo };
-    });
-
-    const core = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: tex,
-        color: 0xd7e6ff,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    );
-    core.scale.set(1.4, 1.4, 1);
-    scene.add(core);
-
-    let yaw = 0.4;
-    let pitch = 0.38;
-    let dist = 12.2;
-    let lookDrag = false;
-    let lastX = 0;
-    let lastY = 0;
-    const pointers = new Map<number, { x: number; y: number; color: [number, number, number] }>();
-    const prevUv: Array<{ x: number; y: number } | null> = Array.from({ length: 12 }, () => null);
-    const inside = Array.from({ length: 12 }, () => false);
-    const prevScore = Array.from({ length: 12 }, () => null as { x: number; y: number } | null);
-    let playTime = 0;
-    let frame = 0;
-    let alive = true;
-    let colorCursor = 0;
+    let L = layoutFor(window.innerWidth, window.innerHeight);
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const pathsLayer = document.createElement("canvas");
+    let pathsSig = "";
 
     const resize = () => {
-      const w = fluidCanvas.clientWidth;
-      const h = fluidCanvas.clientHeight;
+      const w = overlay.clientWidth;
+      const h = overlay.clientHeight;
       if (w < 2 || h < 2) return;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      overlay.width = Math.round(w * dpr);
+      overlay.height = Math.round(h * dpr);
+      pathsLayer.width = overlay.width;
+      pathsLayer.height = overlay.height;
+      L = layoutFor(w, h);
+      pathsSig = "";
+      const c = toScreen(L, 400, 300);
+      engine.center = [c.x / w, 1 - c.y / h];
     };
     resize();
     const observer = new ResizeObserver(resize);
-    observer.observe(fluidCanvas.parentElement ?? fluidCanvas);
+    observer.observe(overlay);
 
-    const applyCamera = () => {
-      camera.position.set(
-        Math.sin(yaw) * Math.cos(pitch) * dist,
-        Math.sin(pitch) * dist,
-        Math.cos(yaw) * Math.cos(pitch) * dist,
-      );
-      camera.lookAt(0, 0.15, 0);
+    const uvOf = (p: { x: number; y: number }) => ({ x: p.x / L.w, y: 1 - p.y / L.h });
+
+    // A soft first breath of smoke, dim enough that empty dye stays black.
+    const seed = () => {
+      const c = engine.center;
+      const sig = 0.07;
+      engine.splat(c[0] - 0.22, c[1] + 0.05, 0.05, 0.02, [0.05, 0.3, 0.33], sig);
+      engine.splat(c[0] + 0.24, c[1] - 0.06, -0.05, 0.02, [0.4, 0.18, 0.04], sig);
+      engine.splat(c[0] + 0.02, c[1] - 0.24, 0.0, 0.04, [0.3, 0.24, 0.08], sig * 0.8);
     };
+    seed();
 
-    const onDown = (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest("[data-chrome]")) return;
-      if (useCosmos.getState().looking) {
-        lookDrag = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        return;
-      }
-      const uv = toUV(fluidCanvas, e.clientX, e.clientY);
+    const orbs: OrbState[] = Array.from({ length: 12 }, () => ({
+      sig: "",
+      prev: null,
+      prevScreen: null,
+      armed: true,
+      flash: 0,
+      pos: { x: 400, y: 300 },
+    }));
+    const rings: Ring[] = [];
+    const labels: Label[] = [];
+    const imprints: Imprint[] = [];
+    let beats = 0;
+    let wasPlaying = false;
+    let clock = 0;
+    let last = 0;
+    let alive = true;
+    let gateFlash = 0;
+    let voiceImprintAt = 0;
+
+    // ---- stirring --------------------------------------------------------
+    const pointers = new Map<number, { x: number; y: number; t: number; color: RGB }>();
+    let colorCursor = 0;
+    const stirColor = (): RGB => {
       const tracks = useCosmos.getState().tracks.filter((t) => t.active);
       const hex = tracks[colorCursor % Math.max(tracks.length, 1)]?.color ?? "#4ecdc4";
       colorCursor += 1;
-      pointers.set(e.pointerId, { ...uv, color: hexRgb(hex) });
+      return hexRgb(hex);
+    };
+    const onDown = (e: PointerEvent) => {
+      if ((e.target as HTMLElement).closest("[data-chrome]")) return;
+      const color = stirColor();
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), color });
+      // A touch alone leaves a two-inch bloom, even without dragging.
+      const sigma = STIR_REACH / 1.4 / L.h;
+      engine.splat(e.clientX / L.w, 1 - e.clientY / L.h, 0, 0, [color[0] * 0.7, color[1] * 0.7, color[2] * 0.7], sigma);
     };
     const onMove = (e: PointerEvent) => {
-      if (lookDrag) {
-        yaw -= (e.clientX - lastX) * 0.005;
-        pitch = Math.min(1.05, Math.max(-0.2, pitch + (e.clientY - lastY) * 0.004));
-        lastX = e.clientX;
-        lastY = e.clientY;
-        return;
-      }
       const prev = pointers.get(e.pointerId);
       if (!prev) return;
-      const uv = toUV(fluidCanvas, e.clientX, e.clientY);
-      engine.splat(uv.x, uv.y, uv.x - prev.x, uv.y - prev.y, prev.color);
-      pointers.set(e.pointerId, { ...uv, color: prev.color });
+      const now = performance.now();
+      const dt = Math.max(0.008, (now - prev.t) / 1000);
+      const dx = e.clientX - prev.x;
+      const dy = e.clientY - prev.y;
+      if (Math.hypot(dx, dy) < 1.5) return;
+      const sigma = STIR_REACH / 1.4 / L.h;
+      const k = 0.9;
+      // Ink follows distance dragged, not event rate, so a long stir paints
+      // a ribbon instead of flooding the field.
+      const ink = 0.3 * Math.min(1, Math.hypot(dx, dy) / (STIR_REACH * 0.35));
+      engine.splat(
+        e.clientX / L.w,
+        1 - e.clientY / L.h,
+        (dx / L.w / dt) * k,
+        (-dy / L.h / dt) * k,
+        [prev.color[0] * ink, prev.color[1] * ink, prev.color[2] * ink],
+        sigma,
+      );
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now, color: prev.color });
     };
     const onUp = (e: PointerEvent) => {
-      lookDrag = false;
       pointers.delete(e.pointerId);
     };
-    const onWheel = (e: WheelEvent) => {
-      if ((e.target as HTMLElement).closest("[data-chrome]")) return;
-      e.preventDefault();
-      dist = Math.min(18, Math.max(7, dist + e.deltaY * 0.006));
-    };
-
     fluidCanvas.addEventListener("pointerdown", onDown);
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-    fluidCanvas.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("pointercancel", onUp);
 
-    const rebuildOrbits = () => {
-      const tracks = useCosmos.getState().tracks;
-      const sig = tracks.map((t) => `${t.active ? 1 : 0}${t.path}${t.color}`).join("|");
-      if (sig === orbitSig) return;
-      orbitSig = sig;
-      for (const child of orbits.children) {
-        const mesh = child as THREE.Mesh;
-        mesh.geometry.dispose();
-        (mesh.material as THREE.Material).dispose();
+    // ---- drawing ---------------------------------------------------------
+    const drawPaths = (tracks: Track[]) => {
+      const sig = `${L.w}x${L.h}|` + tracks.map((t) => `${t.active ? 1 : 0}${t.path}${t.color}`).join("|");
+      if (sig === pathsSig) return;
+      pathsSig = sig;
+      const g = pathsLayer.getContext("2d");
+      if (!g) return;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, pathsLayer.width, pathsLayer.height);
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.globalCompositeOperation = "lighter";
+      g.lineJoin = "round";
+      for (const track of tracks) {
+        if (!track.active) continue;
+        g.beginPath();
+        for (let i = 0; i <= 480; i++) {
+          const p = pointOnPath(i / 480, track.path);
+          const s = toScreen(L, p.x, p.y);
+          if (i === 0) g.moveTo(s.x, s.y);
+          else g.lineTo(s.x, s.y);
+        }
+        g.strokeStyle = track.color;
+        g.globalAlpha = 0.07;
+        g.lineWidth = 7;
+        g.stroke();
+        g.globalAlpha = 0.42;
+        g.lineWidth = 1.15;
+        g.stroke();
       }
-      orbits.clear();
-      tracks.forEach((track, index) => {
-        if (!track.active) return;
-        const geo = new THREE.TubeGeometry(new OrbitCurve(track.path, index), 150, 0.03, 5, false);
-        const mat = new THREE.MeshBasicMaterial({
-          color: track.color,
-          transparent: true,
-          opacity: 0.55,
-          toneMapped: false,
-        });
-        orbits.add(new THREE.Mesh(geo, mat));
-        orbitTrash.push(geo, mat);
+      g.globalAlpha = 1;
+    };
+
+    const strokePath = (track: Track, alpha: number, width: number) => {
+      ctx.beginPath();
+      for (let i = 0; i <= 240; i++) {
+        const p = pointOnPath(i / 240, track.path);
+        const s = toScreen(L, p.x, p.y);
+        if (i === 0) ctx.moveTo(s.x, s.y);
+        else ctx.lineTo(s.x, s.y);
+      }
+      ctx.strokeStyle = track.color;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = width;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+
+    const drawOverlay = (tracks: Track[], playing: boolean) => {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      drawPaths(tracks);
+      ctx.drawImage(pathsLayer, 0, 0);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalCompositeOperation = "lighter";
+
+      tracks.forEach((track, i) => {
+        const o = orbs[i];
+        if (track.active && o.flash > 0.02) strokePath(track, o.flash * 0.55, 1.6 + o.flash * 1.6);
       });
+
+      const gate = toScreen(L, 400, 300);
+      const breathe = ear.smoothed * 30;
+      const gr = (12 + breathe) * Math.max(L.s, 0.6);
+      ctx.strokeStyle = `rgba(255, 238, 205, ${0.3 + gateFlash * 0.5})`;
+      ctx.lineWidth = 1 + gateFlash * 1.5;
+      ctx.beginPath();
+      ctx.arc(gate.x, gate.y, gr, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let k = 0; k < 4; k++) {
+        const a = (k * Math.PI) / 2 + Math.PI / 4;
+        ctx.beginPath();
+        ctx.moveTo(gate.x + Math.cos(a) * (gr + 4), gate.y + Math.sin(a) * (gr + 4));
+        ctx.lineTo(gate.x + Math.cos(a) * (gr + 10), gate.y + Math.sin(a) * (gr + 10));
+        ctx.stroke();
+      }
+      const core = ctx.createRadialGradient(gate.x, gate.y, 0, gate.x, gate.y, gr * 2.4);
+      core.addColorStop(0, `rgba(255, 244, 222, ${0.18 + gateFlash * 0.5})`);
+      core.addColorStop(1, "rgba(255, 244, 222, 0)");
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(gate.x, gate.y, gr * 2.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (const r of rings) {
+        const k = Math.min(1, (clock - r.t) / 1.5);
+        const ease = 1 - (1 - k) ** 3;
+        ctx.strokeStyle = r.color;
+        ctx.globalAlpha = (1 - k) * 0.75;
+        ctx.lineWidth = 2.2 * (1 - k) + 0.4;
+        ctx.beginPath();
+        ctx.arc(gate.x, gate.y, (16 + ease * 230) * L.s, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      tracks.forEach((track, i) => {
+        if (!track.active) return;
+        const o = orbs[i];
+        const s = toScreen(L, o.pos.x, o.pos.y);
+        const scale = Math.max(L.s, 0.55);
+        const glowR = (24 + o.flash * 26) * scale;
+        const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, glowR);
+        g.addColorStop(0, track.color);
+        g.addColorStop(0.25, `${track.color}88`);
+        g.addColorStop(1, `${track.color}00`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, glowR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(255,255,255,${0.75 + o.flash * 0.25})`;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, (3.2 + o.flash * 2) * scale, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.textAlign = "center";
+      ctx.font = "500 13px Outfit, system-ui, sans-serif";
+      for (const lab of labels) {
+        const k = Math.min(1, (clock - lab.t) / 1.4);
+        ctx.globalAlpha = (1 - k) * 0.9;
+        ctx.fillStyle = lab.color;
+        ctx.fillText(lab.text, gate.x, gate.y - (34 + k * 26) * Math.max(L.s, 0.7));
+      }
+      ctx.globalAlpha = 1;
+      void playing;
+    };
+
+    // ---- the instrument ---------------------------------------------------
+    const sound = (track: Track, index: number, o: OrbState, velScreen: { x: number; y: number }) => {
+      triggerNote(track.note, track.volume + 0.15);
+      o.flash = 1;
+      gateFlash = Math.min(1, gateFlash + 0.7);
+      rings.push({ t: clock, color: track.color });
+      labels.push({ t: clock, text: track.note, color: track.color });
+      if (rings.length > 16) rings.shift();
+      if (labels.length > 8) labels.shift();
+
+      const rgb = hexRgb(track.color);
+      const gate = uvOf(toScreen(L, 400, 300));
+      const mode = modeFor(track.note);
+      const rotation = index * 0.2618;
+      const plate = (150 * L.s) / L.h;
+      engine.pattern({
+        x: gate.x,
+        y: gate.y,
+        radius: plate,
+        n: mode.n,
+        m: mode.m,
+        rotation,
+        amount: 0.9 * mode.sign,
+        color: rgb,
+      });
+      const speed = Math.hypot(velScreen.x, velScreen.y) || 1;
+      engine.splat(
+        gate.x,
+        gate.y,
+        (velScreen.x / L.w) * 0.35,
+        (-velScreen.y / L.h) * 0.35,
+        [rgb[0] * 0.6, rgb[1] * 0.6, rgb[2] * 0.6],
+        (26 * L.s) / L.h,
+      );
+      void speed;
+      imprints.push({ t: clock, glow: { rotation, n: mode.n, m: mode.m, sign: mode.sign, color: rgb } });
+      if (imprints.length > 5) imprints.shift();
     };
 
     const loop = (now: number) => {
       if (!alive) return;
-      const dt = Math.min(0.033, frame ? (now - frame) / 1000 : 0.016);
-      frame = now;
+      const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016);
+      last = now;
+      clock += dt;
       sampleEar();
       const state = useCosmos.getState();
-      const params = fluidParams(state.medium, state.prayer, fluidCanvas.clientWidth || 1200);
+      const params = fluidParams(state.medium, state.prayer, state.fade, overlay.clientWidth || 1200);
       params.view = state.curl ? "vorticity" : "dye";
       params.motion = state.tempo / 96;
       engine.setParams(params);
-      if (!lookDrag && state.playing) yaw += (state.prayer ? 0.08 : 0.12) * dt;
-      applyCamera();
-      rebuildOrbits();
 
-      if (state.playing) playTime += dt;
+      // Ambient emitters keep the smoke alive before and during play.
+      const motion = Math.min(2.2, Math.max(0.3, state.tempo / 96));
+      const c = engine.center;
+      const a = clock * 0.07 * motion;
+      const warm: RGB = state.prayer ? [0.55, 0.38, 0.08] : [0.55, 0.24, 0.05];
+      const cool: RGB = state.prayer ? [0.1, 0.2, 0.55] : [0.05, 0.36, 0.4];
+      const emit = (state.playing ? 0.012 : 0.02) * (dt * 60);
+      const rE = 0.34;
+      const e1 = { x: c[0] + Math.cos(a) * rE * 0.9 / engine.aspect * 1.6, y: c[1] + Math.sin(a) * rE * 0.8 };
+      const e2 = { x: c[0] - Math.cos(a) * rE * 0.9 / engine.aspect * 1.6, y: c[1] - Math.sin(a) * rE * 0.8 };
+      engine.splat(e1.x, e1.y, -Math.sin(a) * 0.05, Math.cos(a) * 0.05, [cool[0] * emit, cool[1] * emit, cool[2] * emit], 0.045);
+      engine.splat(e2.x, e2.y, Math.sin(a) * 0.05, -Math.cos(a) * 0.05, [warm[0] * emit, warm[1] * emit, warm[2] * emit], 0.045);
+
+      if (state.playing && !wasPlaying) {
+        // Resume or first press: nothing jumps, and voices sitting on the
+        // gate at the downbeat sound together.
+        orbs.forEach((o) => {
+          o.prev = null;
+        });
+      }
+      wasPlaying = state.playing;
+      if (state.playing) beats += (dt * state.tempo) / 60;
+
+      const activeCount = state.tracks.filter((t) => t.active).length;
+      const subMax = activeCount > 8 ? 2 : 3;
+
       state.tracks.forEach((track, index) => {
-        const orb = orbs[index];
-        if (!orb) return;
+        const o = orbs[index];
+        o.flash = Math.max(0, o.flash - dt * 2.2);
         if (!track.active) {
-          orb.mesh.visible = false;
-          prevUv[index] = null;
-          prevScore[index] = null;
-          inside[index] = false;
+          o.prev = null;
+          o.prevScreen = null;
+          o.sig = "";
           return;
         }
-        const period = (60 / Math.max(state.tempo, 1)) * track.rhythm;
-        const progress = (index * 0.137 + playTime / period) % 1;
+        const sig = `${track.path}|${track.rhythm}`;
+        const progress = (beats / Math.max(track.rhythm, 1)) % 1;
         const p = pointOnPath(progress, track.path);
-        const x = ((p.x - 400) / 300) * SPAN;
-        const y = ((p.y - 300) / 150) * SPAN * 0.5;
-        place(x, y, index, scratch);
-        orb.mesh.visible = true;
-        orb.mesh.position.copy(scratch);
-        (orb.mesh.material as THREE.MeshBasicMaterial).color.set(track.color);
-        orb.halo.material.color.set(track.color);
-        ndc.copy(scratch).project(camera);
-        const uv = { x: ndc.x * 0.5 + 0.5, y: ndc.y * 0.5 + 0.5 };
-        const prev = prevUv[index];
-        if (
-          state.playing &&
-          prev &&
-          ndc.z < 1 &&
-          uv.x > 0.02 &&
-          uv.x < 0.98 &&
-          uv.y > 0.02 &&
-          uv.y < 0.98
-        ) {
-          const rgb = hexRgb(track.color);
-          engine.splat(uv.x, uv.y, (uv.x - prev.x) * 0.1, (uv.y - prev.y) * 0.1, rgb, 0.08);
-          engine.vortex(uv.x, uv.y, (index % 2 === 0 ? 1 : -1) * 10 * dt, 0.055);
-        }
-        prevUv[index] = uv;
-        const prevPoint = prevScore[index];
+        o.pos = p;
+        const screen = toScreen(L, p.x, p.y);
         const distCenter = Math.hypot(p.x - 400, p.y - 300);
-        const approach = prevPoint ? closestOnSegment(prevPoint.x, prevPoint.y, p.x, p.y) : distCenter;
-        prevScore[index] = { x: p.x, y: p.y };
-        const crossing = approach <= 48;
-        if (state.playing && crossing && !inside[index]) {
-          triggerNote(track.note, track.volume + 0.15, index * 0.015);
+
+        if (sig !== o.sig) {
+          // A changed path must not read as a jump across the gate.
+          o.sig = sig;
+          o.prev = { ...p };
+          o.prevScreen = screen;
+          o.armed = distCenter > REARM;
+          return;
         }
-        if (distCenter > 96) inside[index] = false;
-        else if (crossing) inside[index] = true;
+        if (!state.playing) {
+          o.prevScreen = screen;
+          return;
+        }
+
+        const prev = o.prev ?? p;
+        const prevScreen = o.prevScreen ?? screen;
+        const velScreen = { x: (screen.x - prevScreen.x) / dt, y: (screen.y - prevScreen.y) / dt };
+        const approach = closestToCenter(prev.x, prev.y, p.x, p.y);
+        if (o.armed && approach <= HIT_RADIUS) {
+          o.armed = false;
+          sound(track, index, o, velScreen);
+        }
+        if (distCenter > REARM) o.armed = true;
+
+        // The orb is the dye source: a thin comet of its own color.
+        const moved = Math.hypot(screen.x - prevScreen.x, screen.y - prevScreen.y);
+        const sigmaPx = 9 * Math.max(L.s, 0.6);
+        const steps = Math.max(1, Math.min(subMax, Math.ceil(moved / (sigmaPx * 1.2))));
+        const rgb = hexRgb(track.color);
+        const amount = (0.22 * (dt * 60)) / steps;
+        const wake = 0.22;
+        for (let k = 1; k <= steps; k++) {
+          if (engine.splatRoom <= 4) break;
+          const f = k / steps;
+          const sx = prevScreen.x + (screen.x - prevScreen.x) * f;
+          const sy = prevScreen.y + (screen.y - prevScreen.y) * f;
+          engine.splat(
+            sx / L.w,
+            1 - sy / L.h,
+            (velScreen.x / L.w) * wake,
+            (-velScreen.y / L.h) * wake,
+            [rgb[0] * amount, rgb[1] * amount, rgb[2] * amount],
+            sigmaPx / L.h,
+          );
+        }
+        o.prev = { ...p };
+        o.prevScreen = screen;
       });
 
-      if (ear.smoothed > 0.045) {
-        const amp = ear.smoothed * state.voice;
-        engine.vortex(0.5, 0.5, 26 * amp, 0.07 + amp * 0.04);
-        engine.splat(0.5, 0.5, 0, amp * 0.015, [0.85, 0.9, 1.1], amp * 0.35);
+      // Voice: a breathing swirl at the gate, and the sung pitch drawn as a plate.
+      const gateUv = uvOf(toScreen(L, 400, 300));
+      const plateR = (150 * L.s) / L.h;
+      const glows: Glow[] = [];
+      const amp = ear.smoothed * state.voice;
+      if (ear.listening && amp > 0.03) {
+        const hue: RGB = state.prayer ? [1.0, 0.8, 0.35] : [0.7, 0.8, 1.0];
+        const ang = clock * 2.4;
+        for (let k = 0; k < 2; k++) {
+          const aa = ang + k * Math.PI;
+          const rr = plateR * 0.55;
+          engine.splat(
+            gateUv.x + (Math.cos(aa) * rr) / engine.aspect,
+            gateUv.y + Math.sin(aa) * rr,
+            -Math.sin(aa) * amp * 0.9,
+            Math.cos(aa) * amp * 0.9,
+            [hue[0] * amp * 0.5, hue[1] * amp * 0.5, hue[2] * amp * 0.5],
+            plateR * 0.25,
+          );
+        }
+        if (ear.pitch > 0) {
+          const midi = Math.round(12 * Math.log2(ear.pitch / 440) + 69);
+          const [ma, mb] = MODES[((midi % 12) + 12) % 12];
+          const lift = Math.max(0, Math.min(2, Math.floor(midi / 12) - 3));
+          const vg: Glow = {
+            x: gateUv.x,
+            y: gateUv.y,
+            radius: plateR * 1.15,
+            rotation: 0,
+            n: ma + lift,
+            m: mb + lift,
+            sign: midi % 2 === 0 ? 1 : -1,
+            intensity: Math.min(0.9, amp * 3),
+            color: hue,
+          };
+          glows.push(vg);
+          if (clock - voiceImprintAt > 0.35 && amp > 0.06) {
+            voiceImprintAt = clock;
+            engine.pattern({ ...vg, amount: 0.25 * vg.sign, radius: vg.radius });
+          }
+        }
       }
       if (state.prayer) listenForPrayer();
 
-      const pulse = 1.05 + (state.playing ? ear.smoothed * 1.4 + Math.sin(playTime * 1.4) * 0.08 : 0);
-      core.scale.setScalar(pulse);
+      for (let i = imprints.length - 1; i >= 0; i--) {
+        const age = clock - imprints[i].t;
+        if (age > 1.6) {
+          imprints.splice(i, 1);
+          continue;
+        }
+        const k = age / 1.6;
+        glows.push({
+          ...imprints[i].glow,
+          x: gateUv.x,
+          y: gateUv.y,
+          radius: plateR * (1 + k * 0.25),
+          intensity: (1 - k) ** 2 * 0.9,
+        });
+      }
+      engine.setGlows(glows);
+
+      while (rings.length && clock - rings[0].t > 1.6) rings.shift();
+      while (labels.length && clock - labels[0].t > 1.5) labels.shift();
+      gateFlash = Math.max(0, gateFlash - dt * 2.5);
+
       engine.step(dt);
-      renderer.render(scene, camera);
+      drawOverlay(state.tracks, state.playing);
       requestAnimationFrame(loop);
     };
     const raf = requestAnimationFrame(loop);
@@ -390,10 +590,10 @@ export function Stage() {
       const shot = document.createElement("canvas");
       shot.width = fluidCanvas.width;
       shot.height = fluidCanvas.height;
-      const ctx = shot.getContext("2d");
-      if (!ctx) return;
-      ctx.drawImage(fluidCanvas, 0, 0);
-      ctx.drawImage(threeCanvas, 0, 0, shot.width, shot.height);
+      const g = shot.getContext("2d");
+      if (!g) return;
+      g.drawImage(fluidCanvas, 0, 0);
+      g.drawImage(overlay, 0, 0, shot.width, shot.height);
       shot.toBlob((blob) => {
         if (!blob) return;
         const link = document.createElement("a");
@@ -412,13 +612,8 @@ export function Stage() {
       fluidCanvas.removeEventListener("pointerdown", onDown);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      fluidCanvas.removeEventListener("wheel", onWheel);
+      window.removeEventListener("pointercancel", onUp);
       engine.destroy();
-      for (const item of orbitTrash) item.dispose();
-      ringGeo.dispose();
-      ringMat.dispose();
-      tex.dispose();
-      renderer.dispose();
     };
   }, []);
 
@@ -427,9 +622,9 @@ export function Stage() {
       <canvas
         ref={fluidRef}
         className="absolute inset-0 size-full touch-none"
-        aria-label="Smoke field stirred by the orbits. Drag to add ink."
+        aria-label="Smoke field. Drag to stir; the orbits leave their own colored trails."
       />
-      <canvas ref={threeRef} className="pointer-events-none absolute inset-0 size-full" />
+      <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 size-full" />
       {failed ? (
         <p className="absolute inset-x-0 bottom-24 z-20 px-6 text-center text-sm text-gold">{failed}</p>
       ) : null}

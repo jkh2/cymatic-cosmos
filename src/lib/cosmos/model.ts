@@ -136,6 +136,13 @@ export function midiToNote(midi: number) {
   return `${name}${oct}`;
 }
 
+export function noteToMidi(note: string) {
+  const m = /^([A-G])(#?)(-?\d)$/.exec(note.trim());
+  if (!m) return 60;
+  const base = NAMES.indexOf(m[1]) + (m[2] ? 1 : 0);
+  return (Number(m[3]) + 1) * 12 + base;
+}
+
 export function isPreset(value: unknown): value is Preset {
   if (!value || typeof value !== "object") return false;
   const settings = (value as Preset).settings;
