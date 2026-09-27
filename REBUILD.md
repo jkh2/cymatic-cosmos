@@ -24,3 +24,10 @@ Branched from `rebuild/smoke-cosmos`. What changed and why:
 - **Stir brush reaches about two inches**, ink follows distance dragged, and a **Fade** slider sets how fast smoke disappears (default is noticeably quick).
 - **Voice:** autocorrelation pitch, the sung note drawn as a live plate at the gate; Prayer answers a held pitch with root, fifth, octave.
 - The controls moved to a bottom dock so the field has the screen.
+
+## Publishing
+
+`npm run build:standalone` compiles the instrument into one self-contained
+`dist-standalone/index.html` (no server needed). That file is copied to the
+root `index.html` on `main`, which is what GitHub Pages serves. The original
+2D instrument lives on at `classic/index.html`.
