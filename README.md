@@ -1,230 +1,138 @@
-# Cymatic Cosmos ✨🎵⚡
+# Cymatic Cosmos ✨🎵🌫️
 
-*A voice-reactive polyrhythmic music visualizer that transforms sound into sacred geometry*
+*A polyrhythmic instrument that writes its music into living smoke*
 
-![Cymatic Cosmos Demo](https://img.shields.io/badge/Status-Live-brightgreen) ![HTML5](https://img.shields.io/badge/HTML5-E34F26?logo=html5&logoColor=white) ![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black) ![Web Audio API](https://img.shields.io/badge/Web%20Audio%20API-FF6B6B?logoColor=white)
+![Status](https://img.shields.io/badge/Status-Live-brightgreen) ![WebGL2](https://img.shields.io/badge/WebGL2-990000?logo=webgl&logoColor=white) ![Tone.js](https://img.shields.io/badge/Tone.js-F734D7) ![Web Audio API](https://img.shields.io/badge/Web%20Audio%20API-FF6B6B) ![Single file](https://img.shields.io/badge/Single%20file-no%20install-blue)
 
 ## 🚀 Try It Now!
 
-**[🌌 Launch Cymatic Cosmos](https://jkh2.github.io/cymatic-cosmos/)**  
-*Experience the cosmic symphony in your browser - no installation required!*
+**[🌌 Launch Cymatic Cosmos](https://jkh2.github.io/cymatic-cosmos/)**
+*Opens in your browser, no installation required. Press Play, then drag anywhere to stir the smoke.*
 
-![Cymatic Cosmos Screenshot](screenshot1.png)
-*Tesla coil effects and polyrhythmic orbs creating cosmic harmony*
+![Cymatic Cosmos](screenshot-smoke.png)
+*Twelve polyrhythmic voices trail colored smoke through a live fluid simulation. Each note presses its Chladni figure into the smoke as its orb crosses the center.*
 
-> 💡 **Tip**: Allow microphone access when prompted to experience the full voice-reactive starfield magic!
+![Cymatic Cosmos in Relief view](screenshot-relief.png)
+*Relief view: the smoke rises into glowing terrain, and the Chladni figures stand up as ridges you can orbit and fly over.*
+
+> 💡 **Tip:** Turn on **Mic** and sing. Your voice blows smoke out from the center, and your pitch chooses its color.
 
 ---
 
 ## 🌟 What is Cymatic Cosmos?
 
-Cymatic Cosmos is an interactive web application that combines mathematics, music, and physics to create a living visual symphony. Watch as colorful orbs trace beautiful mathematical paths while stars respond to your voice like particles in a cymatic experiment, creating stunning Tesla coil-like effects and sacred geometric patterns.
+Cymatic Cosmos joins music, mathematics and fluid physics into one instrument. Twelve voices travel six sacred curves in polyrhythm. Each voice sounds as its orb crosses the center, and each note is *drawn* as well as heard: the Chladni pattern for that pitch is pressed into a real-time smoke simulation, then carried off by the current. Your hands and your voice move the same smoke.
 
-### ✨ Key Features
+### ✨ Features
 
-- **🎭 Advanced Polyrhythmic Engine**: 12 customizable tracks with different rhythmic cycles creating evolving musical patterns
-- **🌌 Voice-Reactive Starfield**: 200+ stars forming cymatic patterns based on real-time frequency analysis  
-- **⚡ Tesla Coil Effects**: Stars create mesmerizing electric spark visuals when orbs pass through them
-- **🙏 Sacred Prayer Mode**: Harmonic response system generating complementary musical intervals from your voice
-- **🎨 Mathematical Beauty**: Six curve types including figure-8, infinity, spiral, and rose patterns
-- **📸 Instant Screenshots**: Capture and save your cosmic creations as high-quality images
-- **💾 Preset System**: Save and share your perfect configurations with the community
-- **🎵 Crystal Clear Audio**: Professional synthesis with compression, reverb, and smooth envelopes
-- **📱 Responsive Design**: Perfectly centered, professional interface that works on all devices
+- **🌫️ Living smoke**: a GPU Navier-Stokes fluid on a black field, with a gentle current that quickens with the tempo
+- **🎭 Twelve-voice polyrhythm**: each voice has its own rhythmic cycle, curve and note, and all share one downbeat
+- **☄️ Orbs paint the smoke**: every voice trails a comet of its own color along its curve
+- **〰️ Cymatic notes**: each note imprints the Chladni figure for its pitch, glowing at the heart and fading into darkness at the edges
+- **⛰️ Relief view**: the smoke becomes luminous terrain you can zoom, orbit and fly over
+- **✋ Stir it yourself**: drag anywhere to stir, with a brush about two inches wide
+- **🎤 Voice control**: loudness sets how hard the smoke jets blow, the tone of your voice picks which jets fire, and your pitch sets the color
+- **🙏 Prayer mode**: a slower tempo and a sacred palette, and a held sung note is answered with root, fifth and octave
+- **🎨 Smoke or Ink**: rising smoke that clears quickly, or ink in still water that lingers and curls
+- **📸 Capture and presets**: save a picture, and save or share your settings
 
-## 🚀 Quick Start
+## 🎮 How to Play
 
-1. **Download** the `cymatic-cosmos.html` file
-2. **Open** in any modern web browser  
-3. **Click "Play"** to start the polyrhythmic patterns
-4. **Click "Enable Mic"** to activate voice interaction
-5. **Speak, sing, or hum** to see stars dance in cymatic patterns!
-6. **Take Screenshots** to capture your cosmic moments
-7. **Save Presets** to preserve your perfect settings
+1. **Press Play.** The orbs start moving, and each one sounds as it crosses the center.
+2. **Drag anywhere** to stir the smoke.
+3. **Switch to Relief** (or just scroll) to lift the smoke into terrain, then fly around it.
+4. **Turn on Mic** and speak, sing or hum. It works even while the music is paused.
+5. **Open Voices** to change each voice's rhythm, curve and note, or to turn on all twelve.
 
-*No installation required - completely self-contained!*
+### 🎛️ Controls
 
-## 🎮 Complete Feature Guide
+| Control | What it does |
+|---|---|
+| **Play / Pause** | Starts and stops the orbs and the music (keyboard: Space) |
+| **Tempo** | 20–200 BPM. Also sets how fast the smoke current flows |
+| **Fade** | How quickly the smoke clears. Left lingers, right clears fast |
+| **Voices** | The twelve-voice panel: rhythm, curve, note, voice influence, presets (Esc closes it) |
+| **Smoke / Ink** | How the fluid behaves. Smoke rises and clears; ink lingers and curls |
+| **Flat / Relief** | Look straight down, or lift the smoke into 3D terrain |
+| **Color / Spin** | See the smoke itself, or a map of how the fluid is turning (amber counterclockwise, teal clockwise) |
+| **Mic** | Your voice moves the smoke. The ring around the icon swells as it hears you |
+| **Prayer** | Slow tempo, sacred palette, and harmony that answers your voice |
+| **Capture** | Saves a PNG of the current moment |
 
-### 🎛️ **Main Controls**
-- **▶ Play/Pause**: Start or stop the musical patterns
-- **🎤 Enable Mic**: Activate voice interaction with starfield (requires microphone permission)
-- **🙏 Prayer Mode**: Enter sacred experience with harmonic voice response
-- **📸 Screenshot**: Capture and download your cosmic creation as PNG
-- **💾 Save Preset**: Save current settings as downloadable JSON file + local storage
-- **📂 Load Preset**: Load presets from files or recent saves (up to 10 stored locally)
-- **Tempo Slider**: 20-200 BPM (try 30 BPM for deep meditation!)
-- **Voice Influence**: Control how dramatically your voice affects visuals
+### ⛰️ Moving around in Relief view
 
-### 🎵 **Track System** 
-Each of the 12 tracks offers complete customization:
-- **🔄 Rhythm**: 2-12 beats per cycle (creates complex polyrhythmic relationships)
-- **🌀 Path Type**: Choose from 6 mathematical curves:
-  - Figure-8: Classic lemniscate pattern
-  - Horizontal: Wide elliptical loops  
-  - Vertical: Tall flowing curves
-  - Infinity: True mathematical infinity symbol
-  - Spiral: Expanding/contracting spirals
-  - Rose: Complex rose curve mathematics
-- **🎼 Musical Note**: Full chromatic range (C4-C5)
-- **🔊 Volume**: Individual track volume control
-- **⚡ Active/Inactive**: Toggle tracks on/off for different combinations
-- **🎨 Colors**: Dynamic color system (changes in Prayer Mode)
+| On a computer | On a phone or tablet | Does |
+|---|---|---|
+| Scroll wheel | Pinch | Zoom in and out |
+| Right-drag, or Shift + drag | Two-finger drag | Orbit and tilt |
+| Left-drag | One-finger drag | Stir the smoke where you point |
+| Double-click | | Return to the starting view |
 
-### 🙏 **Sacred Prayer Mode**
-Transform your voice into divine harmony:
-- **Auto-Tempo**: Slows to meditative 40 BPM
-- **Sacred Palette**: Shifts to golds, celestial blues, and warm colors
-- **Harmonic Analysis**: Detects your voice's fundamental frequency
-- **Interval Generation**: Creates perfect fifths, octaves, and golden ratio harmonies
-- **Ethereal Atmosphere**: Enhanced reverb and delay for spiritual experience
-- **Visual Transformation**: Background becomes deep cosmic gradient
+While the music plays, the view drifts slowly around the scene on its own. It stops when you take the camera and resumes after a few quiet seconds.
 
-## 📸 **Capture & Share System**
+### 🎵 The Twelve Voices
 
-### 🖼️ **Screenshots**
-- **High Quality**: Full 800x600 resolution PNG images
-- **Smart Naming**: Automatic timestamping (`cymatic-cosmos-2024-01-15T14-30-45.png`)
-- **Instant Download**: One-click capture of your cosmic moment
-- **Perfect for**: Social media, presentations, art portfolios, documentation
+Each voice can be tuned in the **Voices** panel:
+- **Rhythm**: 2 to 16 beats per cycle. Different cycles drift apart and meet again, like 3 against 4 lining up every 12 beats.
+- **Curve**: Figure-8, Horizontal, Vertical, Infinity, Spiral or Rose. All six pass through the center.
+- **Note**: G3 to F5.
+- **Quartet / All**: four voices (C4, E4, G4, B4) by default, or all twelve at once.
 
-### 💾 **Preset System**
-**Save Presets:**
-- Captures ALL settings: tracks, tempo, colors, prayer mode, voice influence
-- Downloads as shareable JSON file
-- Stores recent presets locally for quick access
-- Custom naming with timestamp defaults
+**Presets** save everything (voices, tempo, voice influence, Prayer mode) as a JSON file you can share. Your ten most recent are kept in your browser.
 
-**Load Presets:**
-- Upload preset files shared by others
-- Quick access to your 10 most recent creations  
-- Smart menu system with creation dates
-- Perfect restoration of all settings
+## 🔬 The Science Behind It
 
-**Community Sharing:**
-- Share JSON files with friends, students, or colleagues
-- Create preset libraries for different purposes
-- Build collections: "Meditation," "Education," "Art Installations"
+### Chladni figures
+In 1787 Ernst Chladni scattered sand on a metal plate and drew a violin bow across its edge. The sand gathered along the lines that stay still, and every tone made its own figure. Cymatic Cosmos gives each of the twelve pitch classes its own plate mode, and higher octaves add more rings, so every note has a figure of its own. When an orb crosses the center, that figure is pressed into the smoke.
 
-## 🔬 The Science Behind the Magic
+### Fluid dynamics
+The smoke is a real-time solution of the incompressible Navier-Stokes equations on the GPU, using Jos Stam's *stable fluids* method: advection, vorticity confinement to keep the swirls alive, and a pressure solve that keeps the flow incompressible. The background current comes from a slowly turning stream function, so it never fights the physics. The same approach powers the companion [Navier-Stokes Laboratory](https://github.com/jkh2/navier-stokes-laboratory).
 
-### Cymatic Visualization
-The starfield uses real cymatic physics principles:
-- **Frequency Analysis**: Your voice is analyzed across 32 frequency bands
-- **Wave Interference**: Different frequencies create standing wave patterns
-- **Node Formation**: Stars collect at stable points like sand on a vibrating plate
-- **Tesla Effect**: Orbs create electromagnetic-like attraction fields
+### Polyrhythm
+All twelve voices share one beat clock, and each completes its curve in its own number of beats. A 4-beat and a 3-beat voice meet every 12 beats. Longer cycles like 7 and 11 take 77 beats to realign, which makes phrases that keep evolving.
 
-### Polyrhythmic Mathematics
-- Each track follows a different rhythmic cycle
-- Complex mathematical relationships create natural musical phrases
-- Example: 4-beat + 3-beat cycles align every 12 beats
-- Longer cycles (like 7 + 11) create evolving, hypnotic patterns
-
-### Audio Engineering
-- Built with Tone.js for professional synthesis
-- Multi-stage audio processing (compression, limiting, reverb)
-- Smooth envelopes prevent audio clicks and pops
-- Harmonic generation based on music theory intervals
-
-## 🎨 Visual Modes
-
-### Rest Mode (No Mic Input)
-- Stars spread naturally across the screen
-- Gentle gravitational drift creates organic movement
-- Tesla coil effects when orbs pass through starfield
-- Peaceful, meditative atmosphere
-
-### Voice Mode (With Mic Input)
-- Stars form cymatic patterns based on your voice frequencies
-- Different pitches create different geometric arrangements
-- Real-time frequency spectrum analysis
-- Sacred geometry emerges from sound
-
-## 🛠️ Technical Details
-
-- **Pure HTML/CSS/JavaScript** - No frameworks required
-- **Web Audio API** for real-time audio analysis
-- **Tone.js** for professional music synthesis
-- **SVG** for smooth, scalable graphics
-- **Responsive design** works on desktop and mobile
+### Your voice
+The microphone signal is measured three ways: loudness in decibels, energy in ten bands from 90 Hz to 4 kHz, and pitch by autocorrelation. Loudness drives the strength of a ring of smoke jets, the bands choose which jets fire, and the pitch picks the color and the Chladni figure at the center.
 
 ## 🎯 Perfect For
 
-- 🧘 **Meditation & Prayer**: Voice-responsive sacred geometry with harmonic accompaniment
-- 🎵 **Music Education**: Visualize complex polyrhythmic relationships and mathematical beauty  
-- 🔬 **Science Demonstrations**: Real cymatic physics principles in interactive format
-- 🎨 **Art Creation**: Generate unique cosmic visuals for galleries, installations, presentations
-- 📚 **Educational Content**: Screenshot and preset systems perfect for curriculum development
-- 🎉 **Interactive Experiences**: Voice-controlled cosmic art for events and workshops
-- 🏥 **Therapeutic Applications**: Calming visuals and sounds for meditation therapy
-- 💫 **Personal Exploration**: Discover the mathematical relationships in music and sound
-- 📱 **Social Sharing**: Create and share beautiful cosmic moments with friends
+- 🧘 **Meditation and prayer**: slow tempo, Prayer mode and Relief view with the drifting camera
+- 🎵 **Music education**: see polyrhythm, and see that every pitch has its own shape
+- 🔬 **Science demonstrations**: live fluid dynamics and cymatics in one screen
+- 🎨 **Art and installations**: full-screen, self-running, voice-reactive visuals
+- 🎤 **Singing and voice work**: watch your pitch and breath shape the smoke
 
-## 🌟 Browser Compatibility
+## 🌐 Browser Support
 
-- ✅ **Chrome/Edge**: Full support
-- ✅ **Firefox**: Full support  
-- ✅ **Safari**: Full support
-- 📱 **Mobile**: Works great on phones/tablets
+Needs a browser with **WebGL2** and float render targets: current Chrome, Edge, Firefox and Safari on desktop, and most modern phones and tablets. The microphone needs permission and a secure (https) page, which GitHub Pages provides. Relief view asks more of the graphics card than Flat view; if it stutters on an older phone, switch back to Flat.
 
-*Requires microphone access for voice interaction features*
+## 🛠️ For Developers
 
-## 🤝 Contributing
+The live page is a single self-contained `index.html`, compiled from the source on the [`rebuild/claude-smoke`](https://github.com/jkh2/cymatic-cosmos/tree/rebuild/claude-smoke) branch.
 
-This project welcomes contributions! Some exciting possibilities:
+- **Stack**: React 19, Tailwind 4, Zustand, Tone.js, and a hand-written WebGL2 fluid solver
+- **Run locally**: `npm install`, then `npm run dev`
+- **Build the single file**: `npm run build:standalone` writes `dist-standalone/index.html`; copy it to the root of `main` to publish
+- **Test on slow renderers**: add `?simdt` to the URL to step at a true 1/60 s per frame
 
-**🔬 Science & Mathematics:**
-- Additional mathematical curve paths (hypocycloids, epicycloids, Lissajous curves)  
-- Enhanced cymatic algorithms with more accurate wave physics
-- Advanced harmonic series generation beyond current intervals
-- Real-time pitch detection improvements
+Key files: `src/lib/fluid/` (solver and shaders), `src/components/cosmos/stage.tsx` (the instrument, overlay and camera), `src/lib/cosmos/audio.ts` (synth, mic and pitch), `src/lib/cosmos/camera.ts` (Relief camera).
 
-**🎨 Visual & Audio:**
-- New synthesis types and audio effects
-- Particle system enhancements (trails, decay effects, color morphing)
-- Additional visual modes (3D projections, kaleidoscope effects)
-- Advanced screenshot features (different resolutions, formats)
+## 🕰️ The Classic Edition
 
-**💻 Technical:**
-- Video recording functionality (MP4/GIF export)
-- Mobile-specific touch controls and optimizations
-- Accessibility improvements (keyboard navigation, screen readers)
-- Performance optimizations for older devices
-- WebGL acceleration for larger particle counts
+**[Open the classic version](https://jkh2.github.io/cymatic-cosmos/classic/)**. The original 2D instrument is preserved unchanged: an SVG starfield of 200 stars that gather into cymatic patterns with your voice, and Tesla-coil sparks as orbs pass through.
 
-**🌐 Community:**
-- Preset sharing platform integration
-- Social media sharing enhancements  
-- Educational curriculum packages
-- Multi-language support
-
-## 💡 Preset Ideas to Get Started
-
-Try creating these preset types:
-- **"Deep Meditation"**: Slow tempo (25 BPM), prayer mode, tracks 1-4 active
-- **"Cosmic Storm"**: Fast tempo (180 BPM), all tracks active, high voice influence
-- **"Sacred Geometry"**: Medium tempo (60 BPM), prayer mode, figure-8 and infinity paths
-- **"Tesla Laboratory"**: Medium tempo, tracks with different paths for maximum Tesla effects
-- **"Mathematics Demo"**: Educational preset showing polyrhythmic relationships clearly
-- **"Healing Frequencies"**: Specific notes and rhythms based on sound therapy principles
-
-## 📚 Educational Value
-
-Cymatic Cosmos demonstrates:
-- **Physics**: Wave interference, resonance, cymatics
-- **Mathematics**: Geometric curves, rhythm relationships
-- **Music Theory**: Polyrhythms, harmonic intervals
-- **Programming**: Web Audio API, real-time graphics
-- **Art**: Generative visuals, interactive design
+![Cymatic Cosmos classic](screenshot1.png)
+*The classic edition: Tesla coil effects and polyrhythmic orbs creating cosmic harmony*
 
 ## 🙏 Acknowledgments
 
+Created by **James Keith Harwood II**. The smoke edition was built in collaboration with AI partners Grok (xAI) and Claude (Anthropic).
+
 Inspired by:
-- Hans Jenny's cymatic research
+- Ernst Chladni's sound figures and Hans Jenny's cymatic research
+- Jos Stam's *Stable Fluids*
 - Sacred geometry traditions
 - Polyrhythmic music from around the world
-- Tesla coil physics demonstrations
 - The mathematical beauty of the cosmos
 
 ## 📄 License
@@ -236,18 +144,20 @@ Inspired by:
 This work is licensed under a [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](http://creativecommons.org/licenses/by-nc-sa/4.0/).
 
 **You are free to:**
-- 🔄 **Share** — copy and redistribute the material in any medium or format
-- 🔧 **Adapt** — remix, transform, and build upon the material
+- 🔄 **Share**: copy and redistribute the material in any medium or format
+- 🔧 **Adapt**: remix, transform, and build upon the material
 
 **Under the following terms:**
-- 👤 **Attribution** — You must give appropriate credit, provide a link to the license, and indicate if changes were made
-- 🚫 **NonCommercial** — You may not use the material for commercial purposes
-- 🔄 **ShareAlike** — If you remix, transform, or build upon the material, you must distribute your contributions under the same license
+- 👤 **Attribution**: you must give appropriate credit, provide a link to the license, and indicate if changes were made
+- 🚫 **NonCommercial**: you may not use the material for commercial purposes
+- 🔄 **ShareAlike**: if you remix, transform, or build upon the material, you must distribute your contributions under the same license
 
 **Commercial Licensing:** For commercial use, licensing inquiries, or custom implementations, please contact the project maintainer.
+
+Third-party libraries keep their own licenses (Tone.js, React and others are MIT licensed).
 
 ---
 
 *"In the beginning was the Word, and the Word was made flesh through frequency, resonance, and sacred geometry."*
 
-**Experience the cosmos responding to your voice. Speak, and watch the universe dance.**
+**Press Play, and watch the music write itself into the smoke.**
