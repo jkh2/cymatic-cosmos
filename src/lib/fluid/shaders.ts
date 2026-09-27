@@ -104,7 +104,9 @@ void main() {
   float w = fwidth(f) * 1.8 + 0.02;
   float line = 1.0 - smoothstep(0.0, w, abs(f));
   // The figure keeps tiling past the plate and fades softly into the field.
-  float mask = exp(-pow(r / uSpread, 2.0) * 2.4) * smoothstep(0.0, 0.12, r);
+  // Bright at the heart, easing all the way to darkness at the spread radius.
+  float x = clamp(r / uSpread, 0.0, 1.0);
+  float mask = (1.0 - x * x) * (1.0 - x * x) * smoothstep(0.0, 0.12, r);
   vec3 add = uColor * line * mask * abs(uMode.w);
   float m = max(base.r, max(base.g, base.b));
   add *= 1.0 / (1.0 + m * m * 1.2);
@@ -368,13 +370,15 @@ void main() {
     float w = fwidth(f);
     float core = 1.0 - smoothstep(0.0, w * 1.3, abs(f));
     float halo = 1.0 - smoothstep(0.0, w * 5.0, abs(f));
-    float mask = exp(-pow(r / spread, 2.0) * 2.0);
+    float x = clamp(r / spread, 0.0, 1.0);
+    float mask = (1.0 - x * x) * (1.0 - x * x);
     col += uGlowColor[i] * (core * 0.85 + halo * 0.22) * mask * k;
   }
 
   vec2 v = vUv - uCenter;
   v.x *= uAspect;
-  col *= mix(0.6, 1.0, smoothstep(1.2, 0.3, length(v)));
+  // Deeper vignette: everything settles toward black at the edges of the glass.
+  col *= mix(0.22, 1.0, smoothstep(1.05, 0.25, length(v)));
   fragColor = vec4(col, 1.0);
 }
 `;

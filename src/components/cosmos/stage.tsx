@@ -212,6 +212,7 @@ export function Stage() {
     let gateFlash = 0;
     let voiceImprintAt = 0;
     let strum = 0;
+    const fixedDt = new URLSearchParams(window.location.search).has("simdt") ? 1 / 60 : 0;
 
     // ---- stirring --------------------------------------------------------
     const pointers = new Map<number, { x: number; y: number; t: number; color: RGB }>();
@@ -449,7 +450,8 @@ export function Stage() {
 
     const loop = (now: number) => {
       if (!alive) return;
-      const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016);
+      // ?simdt steps at a true 1/60 s per frame, for testing on slow renderers.
+      const dt = fixedDt || Math.min(0.05, last ? (now - last) / 1000 : 0.016);
       last = now;
       clock += dt;
       strum = 0;
