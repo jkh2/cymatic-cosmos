@@ -17,6 +17,7 @@
 - **Orbs paint the smoke:** each voice leaves a comet of its own color along its sacred curve
 - **Cymatic notes:** every note imprints the Chladni pattern for its pitch, then the current carries it away
 - **Stir it yourself:** drag anywhere to stir; the **Fade** slider sets how fast the smoke clears
+- **Relief view:** the smoke rises into glowing terrain; scroll to zoom, right-drag or Shift-drag to orbit (two fingers on a phone), double-click to reset
 - **Voice and Prayer:** sing to draw your pitch as a live plate; in Prayer mode a held note is answered in harmony
 
 **[🕰️ Open the classic version](https://jkh2.github.io/cymatic-cosmos/classic/)** (the original 2D starfield instrument, preserved)
