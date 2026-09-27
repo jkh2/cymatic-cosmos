@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Cymatic Cosmos">
+  <rect width="32" height="32" rx="7" fill="#05060a"/>
+  <path fill="none" stroke="#d4b06a" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"
+    d="M16 16C16 16 13.4 11.4 10 11.4 6.8 11.4 5 13.5 5 16s1.8 4.6 5 4.6c3.4 0 6-4.6 6-4.6 0 0 2.6-4.6 6-4.6 3.2 0 5 2.1 5 4.6s-1.8 4.6-5 4.6c-3.4 0-6-4.6-6-4.6z"/>
+  <circle cx="16" cy="16" r="2.15" fill="#f4f7ff"/>
+  <circle cx="10" cy="16" r="1.45" fill="#ff6b6b"/>
+  <circle cx="22" cy="16" r="1.45" fill="#4ecdc4"/>
+</svg>
