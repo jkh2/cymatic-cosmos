@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   Camera,
   Droplets,
-  Eye,
+  Palette,
+  RotateCw,
   Mic,
   MicOff,
   Pause,
@@ -40,6 +41,47 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; text: string; icon: ReactNode; hint: string }>;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className="flex h-10 shrink-0 items-center rounded-full border border-white/10 bg-white/[0.04] p-0.5"
+    >
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            aria-label={o.hint}
+            title={o.hint}
+            onClick={() => onChange(o.value)}
+            className={`inline-flex h-full items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors ${
+              on ? "bg-gold/90 text-void" : "text-mist hover:text-ink"
+            }`}
+          >
+            {o.icon}
+            <span className="hidden sm:inline">{o.text}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -100,7 +142,7 @@ export function Console() {
       </header>
 
       <p
-        className={`absolute inset-x-0 bottom-[8.5rem] px-6 text-center text-xs text-mist transition-opacity duration-1000 sm:bottom-28 lg:bottom-24 ${
+        className={`absolute inset-x-0 bottom-[8.5rem] px-6 text-center text-xs text-mist transition-opacity duration-1000 sm:bottom-28 xl:bottom-24 ${
           playing && !micError && !notice ? "opacity-0" : "opacity-80"
         }`}
       >
@@ -110,7 +152,7 @@ export function Console() {
       <nav
         data-chrome
         aria-label="Instrument controls"
-        className="pointer-events-auto absolute inset-x-3 bottom-3 flex flex-wrap items-center justify-center gap-2 rounded-3xl border border-white/10 bg-black/45 p-2 backdrop-blur-md lg:inset-x-auto lg:left-1/2 lg:-translate-x-1/2 lg:flex-nowrap lg:rounded-full"
+        className="pointer-events-auto absolute inset-x-3 bottom-3 flex flex-wrap items-center justify-center gap-2 rounded-3xl border border-white/10 bg-black/45 p-2 backdrop-blur-md xl:inset-x-auto xl:left-1/2 xl:-translate-x-1/2 xl:flex-nowrap xl:rounded-full"
       >
         <Chip pressed={playing} label={playing ? "Pause" : "Play"} onClick={() => void togglePlay()}>
           {playing ? <Pause size={18} /> : <Play size={18} />}
@@ -144,14 +186,33 @@ export function Console() {
           <SlidersHorizontal size={18} />
           <span>Voices</span>
         </Chip>
-        <Chip pressed={medium === "ink"} label="Smoke or ink" onClick={toggleMedium}>
-          {medium === "smoke" ? <Wind size={18} /> : <Droplets size={18} />}
-          <span className="hidden sm:inline">{medium === "smoke" ? "Smoke" : "Ink"}</span>
-        </Chip>
-        <Chip pressed={curl} label="Curl view" onClick={toggleCurl}>
-          <Eye size={18} />
-          <span className="hidden sm:inline">{curl ? "Curl" : "Dye"}</span>
-        </Chip>
+        <Segmented
+          label="Medium"
+          value={medium}
+          onChange={(v) => {
+            if (v !== medium) toggleMedium();
+          }}
+          options={[
+            { value: "smoke", text: "Smoke", icon: <Wind size={16} />, hint: "Smoke: rises and clears quickly" },
+            { value: "ink", text: "Ink", icon: <Droplets size={16} />, hint: "Ink in water: no rise, lingers and curls" },
+          ]}
+        />
+        <Segmented
+          label="View"
+          value={curl ? "spin" : "color"}
+          onChange={(v) => {
+            if ((v === "spin") !== curl) toggleCurl();
+          }}
+          options={[
+            { value: "color", text: "Color", icon: <Palette size={16} />, hint: "Color: the smoke itself" },
+            {
+              value: "spin",
+              text: "Spin",
+              icon: <RotateCw size={16} />,
+              hint: "Spin map: how the fluid is turning. Amber turns counterclockwise, teal clockwise",
+            },
+          ]}
+        />
         <Chip pressed={mic} label={mic ? "Stop listening" : "Listen"} onClick={() => void toggleMic()}>
           {mic ? <MicOff size={18} /> : <Mic size={18} />}
           <span className="hidden sm:inline">{mic ? "Listening" : "Listen"}</span>

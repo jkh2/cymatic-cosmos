@@ -78,7 +78,7 @@ function fluidParams(medium: "smoke" | "ink", prayer: boolean, fade: number, wid
       swirl: 10,
       motion: 1,
       maxVelocity: 150,
-      exposure: 0.95,
+      exposure: 1.05,
       view: "dye",
       quality,
     };
@@ -92,7 +92,7 @@ function fluidParams(medium: "smoke" | "ink", prayer: boolean, fade: number, wid
     swirl: prayer ? 16 : 10,
     motion: 1,
     maxVelocity: 150,
-    exposure: 0.9,
+    exposure: 1.0,
     view: "dye",
     quality,
   };
@@ -197,6 +197,7 @@ export function Stage() {
     let alive = true;
     let gateFlash = 0;
     let voiceImprintAt = 0;
+    let strum = 0;
 
     // ---- stirring --------------------------------------------------------
     const pointers = new Map<number, { x: number; y: number; t: number; color: RGB }>();
@@ -376,7 +377,10 @@ export function Stage() {
 
     // ---- the instrument ---------------------------------------------------
     const sound = (track: Track, index: number, o: OrbState, velScreen: { x: number; y: number }) => {
-      triggerNote(track.note, track.volume + 0.15);
+      // Voices landing on the same frame are strummed a few ms apart, so
+      // their attacks do not stack into one hard transient.
+      triggerNote(track.note, track.volume + 0.12, strum * 0.012);
+      strum += 1;
       o.flash = 1;
       gateFlash = Math.min(1, gateFlash + 0.7);
       rings.push({ t: clock, color: track.color });
@@ -418,6 +422,7 @@ export function Stage() {
       const dt = Math.min(0.05, last ? (now - last) / 1000 : 0.016);
       last = now;
       clock += dt;
+      strum = 0;
       sampleEar();
       const state = useCosmos.getState();
       const params = fluidParams(state.medium, state.prayer, state.fade, overlay.clientWidth || 1200);

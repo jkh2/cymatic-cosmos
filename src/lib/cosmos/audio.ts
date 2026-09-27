@@ -28,17 +28,25 @@ export function ensureAudio() {
   if (started) return Promise.resolve();
   starting ??= (async () => {
     tone = await import("tone");
+    // A larger render buffer: the smoke keeps the GPU and main thread busy,
+    // and the default "interactive" latency lets the audio thread underrun,
+    // which is heard as clicks and pops.
+    tone.setContext(new tone.Context({ latencyHint: "playback", lookAhead: 0.12 }));
     await tone.start();
     const comp = new tone.Compressor(-22, 3);
     const reverb = new tone.Reverb({ decay: 5, wet: 0.38 });
     const echo = new tone.FeedbackDelay({ delayTime: "8n.", feedback: 0.22, wet: 0.14 });
-    const limiter = new tone.Limiter(-2);
+    const limiter = new tone.Limiter(-3);
     // A struck-glass voice: quick attack, long bloom, soft upper partials.
+    // A 20ms attack still reads as a strike but no longer clicks on low notes.
     synth = new tone.PolySynth(tone.Synth, {
       oscillator: { type: "custom", partials: [1, 0.32, 0.12, 0.05] },
-      envelope: { attack: 0.006, decay: 1.3, sustain: 0.06, release: 2.4 },
+      envelope: { attack: 0.02, attackCurve: "sine", decay: 1.3, sustain: 0.06, release: 2.4, releaseCurve: "exponential" },
     });
-    synth.maxPolyphony = 32;
+    // Headroom so long releases are never cut off by voice stealing.
+    synth.maxPolyphony = 64;
+    synth.volume.value = -4;
+    const soften = new tone.Filter({ frequency: 3600, type: "lowpass", rolloff: -12 });
     harmony = new tone.PolySynth(tone.Synth, {
       oscillator: { type: "sine" },
       envelope: { attack: 0.4, decay: 1.2, sustain: 0.55, release: 3.2 },
@@ -46,7 +54,7 @@ export function ensureAudio() {
     harmony.volume.value = -14;
     const dest = tone.getDestination();
     dest.volume.value = -6;
-    synth.chain(echo, comp, reverb, limiter, dest);
+    synth.chain(soften, echo, comp, reverb, limiter, dest);
     harmony.chain(reverb);
     await reverb.ready;
     started = true;

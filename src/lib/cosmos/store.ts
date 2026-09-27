@@ -52,7 +52,7 @@ export const useCosmos = create<{
   prayer: false,
   medium: "smoke",
   curl: false,
-  fade: 0.45,
+  fade: 0.3,
   tracks: createTracks(),
   panelOpen: false,
   notice: null,
